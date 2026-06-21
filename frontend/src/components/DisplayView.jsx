@@ -4,13 +4,6 @@ import SplitFlapDisplay from './SplitFlapDisplay'
 import { useDisplayState } from '../hooks/useDisplayState'
 import { unlockAudio } from '../utils/audio'
 
-function getFillTileDimensions(cols, rows, vpWidth, vpHeight, dividerWidth) {
-  const totalDivW = (cols - 1) * dividerWidth
-  const totalDivH = (rows - 1) * dividerWidth
-  const tileW = Math.floor((vpWidth  - totalDivW) / cols)
-  const tileH = Math.floor((vpHeight - totalDivH) / rows)
-  return { tileW: Math.max(8, tileW), tileH: Math.max(8, tileH) }
-}
 
 function useWakeLock() {
   const lockRef = React.useRef(null)
@@ -42,8 +35,6 @@ export default function DisplayView() {
   const kiosk = searchParams.get('kiosk') === '1'
 
   const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
-  const [viewportWidth,  setViewportWidth]  = useState(window.innerWidth)
-  const [viewportHeight, setViewportHeight] = useState(window.innerHeight)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [showControls, setShowControls] = useState(true)
@@ -51,11 +42,6 @@ export default function DisplayView() {
 
   useWakeLock()
 
-  useEffect(() => {
-    const onResize = () => { setViewportWidth(window.innerWidth); setViewportHeight(window.innerHeight) }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
 
   useEffect(() => {
     if (kiosk) return
@@ -88,7 +74,6 @@ export default function DisplayView() {
     }
   }, [])
 
-  const { tileW, tileH } = getFillTileDimensions(cols, rows, viewportWidth, viewportHeight, dividerWidth)
   const bgColor = appSettings.bg_color || '#111111'
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
@@ -149,13 +134,11 @@ export default function DisplayView() {
         tileColor={tileColor}
         tileBgColor={tileBgColor}
         bgColor={bgColor}
-        tilePixelWidth={tileW}
-        tilePixelHeight={tileH}
         soundEnabled={soundEnabled && audioUnlocked}
         dividerWidth={dividerWidth}
         dividerColor={dividerColor}
         physicalMode={physicalMode}
-        fillViewport={true}
+        fillViewport
       />
 
       {!audioUnlocked && !kiosk && (

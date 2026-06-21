@@ -30,11 +30,13 @@ export default function FlapTile({
   tileColor = '#ffffff',
   tileBgColor = '#2a2a2a',
   size = 'md',
-  tileWidth = null,   // explicit px — overrides size preset
-  tileHeight = null,  // explicit px — overrides size preset
+  tileWidth = null,     // explicit px — overrides size preset
+  tileHeight = null,    // explicit px — overrides size preset
+  tileFill = false,     // when true: fills CSS grid cell (100% × 100%)
+  gridFontSize = null,  // CSS font-size string for fill mode, e.g. 'min(calc(...))'
   delay = 0,
   soundEnabled = true,
-  extraShadow = undefined,  // additional CSS box-shadow for physical mode
+  extraShadow = undefined,
 }) {
   const [displayCode, setDisplayCode] = useState(code)
   const [isFlipping, setIsFlipping] = useState(false)
@@ -100,8 +102,10 @@ export default function FlapTile({
     letterSpacing: '0.02em',
   }
 
-  const tileStyle = { width: w, height: h, boxShadow: extraShadow }
-  const textStyle = { fontSize: fs, lineHeight: 1 }
+  const tileStyle = tileFill
+    ? { width: '100%', height: '100%', boxShadow: extraShadow }
+    : { width: w, height: h, boxShadow: extraShadow }
+  const textStyle = { fontSize: tileFill ? (gridFontSize || '16px') : fs, lineHeight: 1 }
 
   if (isColor || targetIsColor) {
     const hex = COLOR_HEX[isColor ? displayCode : code] || '#f1faee'

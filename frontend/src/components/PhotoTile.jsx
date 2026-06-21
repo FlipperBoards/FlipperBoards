@@ -22,10 +22,11 @@ export default function PhotoTile({
   size = 'md',
   tileWidth = null,
   tileHeight = null,
+  tileFill = false,
   physicalMode = false,
 }) {
   const preset = SIZE_MAP[size] || SIZE_MAP.md
-  const sz = { w: tileWidth ?? preset.w, h: tileHeight ?? preset.h }
+  const sz = tileFill ? { w: '100%', h: '100%' } : { w: tileWidth ?? preset.w, h: tileHeight ?? preset.h }
 
   // % position: tile (col, row) → what % of the scaled image starts here
   const posX = cols > 1 ? (col / (cols - 1)) * 100 : 0
