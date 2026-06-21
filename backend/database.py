@@ -40,6 +40,14 @@ async def init_db():
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS playlist_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                screen_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+        """)
         await db.commit()
         await _seed_defaults(db)
 
@@ -79,12 +87,13 @@ async def _seed_defaults(db: aiosqlite.Connection):
 
     # Seed default mode configs for the main screen
     mode_defaults = [
-        ("main", "clock",    "{}", 1, 0),
-        ("main", "text",     "{}", 0, 1),
-        ("main", "weather",  "{}", 0, 2),
-        ("main", "news",     "{}", 0, 3),
-        ("main", "quotes",   "{}", 0, 4),
-        ("main", "calendar", "{}", 0, 5),
+        ("main", "clock",          "{}", 1, 0),
+        ("main", "text",           "{}", 0, 1),
+        ("main", "weather",        "{}", 0, 2),
+        ("main", "news",           "{}", 0, 3),
+        ("main", "quotes",         "{}", 0, 4),
+        ("main", "calendar",       "{}", 0, 5),
+        ("main", "photo_playlist", "{}", 0, 6),
     ]
     for screen_id, mode, config, enabled, order in mode_defaults:
         await db.execute(
@@ -143,6 +152,7 @@ async def create_screen(screen_id: str, name: str, rows: int = 6, cols: int = 22
         mode_defaults = [
             ("clock", 1, 0), ("text", 0, 1), ("weather", 0, 2),
             ("news", 0, 3), ("quotes", 0, 4), ("calendar", 0, 5),
+            ("photo_playlist", 0, 6),
         ]
         for mode, enabled, order in mode_defaults:
             await db.execute(
@@ -168,6 +178,7 @@ async def delete_screen(screen_id: str):
         await db.execute("DELETE FROM screens WHERE id=?", (screen_id,))
         await db.execute("DELETE FROM screen_modes WHERE screen_id=?", (screen_id,))
         await db.execute("DELETE FROM text_messages WHERE screen_id=?", (screen_id,))
+        await db.execute("DELETE FROM playlist_images WHERE screen_id=?", (screen_id,))
         await db.commit()
 
 
@@ -231,4 +242,41 @@ async def add_text_message(screen_id: str, text: str, duration: int = 30) -> int
 async def delete_text_message(msg_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM text_messages WHERE id = ?", (msg_id,))
+        await db.commit()
+
+
+# ── Per-screen image playlist ─────────────────────────────────────────────────
+
+async def get_playlist(screen_id: str) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, url, sort_order FROM playlist_images WHERE screen_id=? ORDER BY sort_order, id",
+            (screen_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def add_playlist_image(screen_id: str, url: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "INSERT INTO playlist_images (screen_id, url, sort_order) "
+            "VALUES (?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_images WHERE screen_id=?))",
+            (screen_id, url, screen_id)
+        ) as cur:
+            row_id = cur.lastrowid
+        await db.commit()
+    return row_id
+
+
+async def remove_playlist_image(image_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM playlist_images WHERE id=?", (image_id,))
+        await db.commit()
+
+
+async def clear_playlist(screen_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM playlist_images WHERE screen_id=?", (screen_id,))
         await db.commit()

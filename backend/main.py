@@ -1,20 +1,27 @@
 import asyncio
 import json
+import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import os
 
 import database
 from websocket_manager import manager
 from charmap import blank_matrix, text_to_matrix
 from config import settings
+
+# ── Upload directory ──────────────────────────────────────────────────────────
+
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 
 # ── Per-screen runtime state ──────────────────────────────────────────────────
 
@@ -25,7 +32,10 @@ class ScreenState:
         self.rows = rows
         self.cols = cols
         self.matrix: list[list[int]] = blank_matrix(rows, cols)
-        self.color_matrix: list[list[str]] | None = None  # set when in full-color image mode
+        self.color_matrix: list[list[str]] | None = None
+        self.photo_url: str | None = None   # single photo push or current playlist item
+        self.playlist: list[str] = []        # in-memory playlist (URLs)
+        self.playlist_idx: int = 0
         self.mode: str = "clock"
         self.mode_idx: int = 0
         self.rotation_task: asyncio.Task | None = None
@@ -48,7 +58,6 @@ async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict) -> li
     from services.news import get_news_matrix
     from services.quotes import get_quote_matrix
     from services.calendar_svc import get_calendar_matrix
-    from services.text_svc import get_text_matrix
 
     if mode == "clock":
         return get_clock_matrix(
@@ -80,20 +89,27 @@ async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict) -> li
             ical_url=db_settings.get("calendar_ical_url", ""),
             timezone=db_settings.get("timezone", "UTC"),
         )
-    elif mode == "text":
-        from database import get_text_messages
-        # Need screen_id — caller should handle this
-        return blank_matrix(rows, cols)
 
     return blank_matrix(rows, cols)
 
 
 async def advance_screen_mode(screen_id: str):
-    """Advance a screen to its next enabled mode and push to WebSocket clients."""
+    """Advance a screen to its next enabled mode (or next playlist image) and broadcast."""
     if screen_id not in _screens:
         return
 
     state = _screens[screen_id]
+
+    # If currently on playlist and there are more images to show, just advance the image
+    if state.mode == "photo_playlist" and state.playlist:
+        next_idx = state.playlist_idx + 1
+        if next_idx < len(state.playlist):
+            state.playlist_idx = next_idx
+            state.photo_url = state.playlist[next_idx]
+            await _broadcast_screen(state)
+            return
+        # Completed a full cycle — fall through to advance to the next mode
+
     db_settings = await database.get_settings()
     modes = await database.get_modes(screen_id)
     enabled = [m for m in modes if m["enabled"]]
@@ -104,6 +120,19 @@ async def advance_screen_mode(screen_id: str):
     mode_name = enabled[state.mode_idx]["mode"]
     state.mode = mode_name
 
+    # Clear image state when entering any non-photo mode
+    state.color_matrix = None
+    state.photo_url = None
+
+    if mode_name == "photo_playlist":
+        playlist_items = await database.get_playlist(screen_id)
+        state.playlist = [item["url"] for item in playlist_items]
+        state.playlist_idx = 0
+        if state.playlist:
+            state.photo_url = state.playlist[0]
+        await _broadcast_screen(state)
+        return
+
     if mode_name == "text":
         messages = await database.get_text_messages(screen_id)
         from services.text_svc import get_text_matrix
@@ -112,12 +141,19 @@ async def advance_screen_mode(screen_id: str):
         matrix = await _render_mode(mode_name, state.rows, state.cols, db_settings)
 
     state.matrix = matrix
-    state.color_matrix = None  # advancing mode always exits full-color image mode
     await _broadcast_screen(state)
 
 
 async def _broadcast_screen(state: ScreenState):
-    if state.color_matrix is not None:
+    if state.photo_url is not None:
+        await manager.broadcast(state.screen_id, {
+            "type": "photo_split",
+            "image_url": state.photo_url,
+            "rows": state.rows,
+            "cols": state.cols,
+            "screen_id": state.screen_id,
+        })
+    elif state.color_matrix is not None:
         await manager.broadcast(state.screen_id, {
             "type": "image_update",
             "color_matrix": state.color_matrix,
@@ -149,7 +185,7 @@ async def _rotation_loop(screen_id: str):
 
 
 async def _clock_tick_loop():
-    """Global 1-second clock updater: pushes clock matrix to all screens showing clock mode."""
+    """Global 1-second clock updater: pushes clock matrix to all screens in clock mode."""
     try:
         while True:
             await asyncio.sleep(1)
@@ -165,6 +201,7 @@ async def _clock_tick_loop():
                     )
                     state.matrix = matrix
                     state.color_matrix = None
+                    state.photo_url = None
                     await _broadcast_screen(state)
     except asyncio.CancelledError:
         pass
@@ -213,18 +250,18 @@ async def lifespan(app: FastAPI):
             show_date=db_settings.get("show_date", "true") == "true",
             timezone=db_settings.get("timezone", "UTC"),
         )
+        # Load persisted playlist into memory
+        playlist_items = await database.get_playlist(sid)
+        state.playlist = [item["url"] for item in playlist_items]
         _screens[sid] = state
 
-    # Start rotation loops
     for sid in _screens:
         _start_screen_rotation(sid)
 
-    # Start global clock tick
     _clock_task = asyncio.create_task(_clock_tick_loop())
 
     yield
 
-    # Cleanup
     _clock_task.cancel()
     for sid in list(_screens.keys()):
         _stop_screen_rotation(sid)
@@ -234,6 +271,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FlipperBoards", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Serve uploaded images before the catch-all SPA route
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -245,7 +285,7 @@ class MatrixContent(BaseModel):
     matrix: list[list[int]]
 
 class ColorMatrixContent(BaseModel):
-    color_matrix: list[list[str]]  # CSS hex colors e.g. "#ff5733"
+    color_matrix: list[list[str]]
 
 class SettingsUpdate(BaseModel):
     rotation_interval: Optional[int] = None
@@ -266,7 +306,6 @@ class SettingsUpdate(BaseModel):
     divider_width: Optional[int] = None
     divider_color: Optional[str] = None
     physical_mode: Optional[bool] = None
-    sound_enabled: Optional[bool] = None
 
 class ScreenCreate(BaseModel):
     id: str
@@ -294,6 +333,15 @@ class TextMessage(BaseModel):
 
 def _valid_screen_id(sid: str) -> bool:
     return bool(re.match(r'^[a-z0-9_-]{1,64}$', sid))
+
+
+def _save_upload(file_bytes: bytes, original_filename: str) -> str:
+    """Save uploaded bytes to UPLOAD_DIR, return the public URL path."""
+    ext = os.path.splitext(original_filename or "image.jpg")[1].lower() or ".jpg"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
+        f.write(file_bytes)
+    return f"/uploads/{filename}"
 
 
 # ── Screen management ─────────────────────────────────────────────────────────
@@ -387,6 +435,7 @@ async def get_state(screen: str = Query(default="main")):
         "rows": state.rows,
         "cols": state.cols,
         "mode": state.mode,
+        "photo_url": state.photo_url,
     }
 
 
@@ -396,6 +445,7 @@ async def push_text(content: DisplayContent, screen: str = Query(default="main")
     matrix = text_to_matrix(content.text, state.rows, state.cols)
     state.matrix = matrix
     state.color_matrix = None
+    state.photo_url = None
     state.mode = "text_push"
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
@@ -409,6 +459,8 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state.matrix = content.matrix
     state.rows = len(content.matrix)
     state.cols = len(content.matrix[0]) if content.matrix else 0
+    state.color_matrix = None
+    state.photo_url = None
     state.mode = "matrix_push"
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
@@ -421,6 +473,7 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
         raise HTTPException(400, "Empty color matrix")
     state = get_screen_state(screen)
     state.color_matrix = content.color_matrix
+    state.photo_url = None
     state.rows = len(content.color_matrix)
     state.cols = len(content.color_matrix[0]) if content.color_matrix else state.cols
     state.mode = "image_push"
@@ -428,10 +481,28 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
     return {"status": "ok", "screen": screen}
 
 
+@app.post("/api/display/photo")
+async def push_photo(
+    file: UploadFile = File(...),
+    screen: str = Query(default="main"),
+):
+    """Upload a photo and display it split across all tiles immediately."""
+    state = get_screen_state(screen)
+    content = await file.read()
+    image_url = _save_upload(content, file.filename or "photo.jpg")
+    state.photo_url = image_url
+    state.color_matrix = None
+    state.mode = "photo_push"
+    await _broadcast_screen(state)
+    return {"status": "ok", "image_url": image_url, "screen": screen}
+
+
 @app.post("/api/display/blank")
 async def blank_display(screen: str = Query(default="main")):
     state = get_screen_state(screen)
     state.matrix = blank_matrix(state.rows, state.cols)
+    state.color_matrix = None
+    state.photo_url = None
     state.mode = "blank"
     await _broadcast_screen(state)
     return {"status": "ok"}
@@ -443,6 +514,73 @@ async def next_mode(screen: str = Query(default="main")):
         raise HTTPException(404)
     await advance_screen_mode(screen)
     return {"status": "ok", "mode": _screens[screen].mode}
+
+
+# ── Image playlist ────────────────────────────────────────────────────────────
+
+@app.get("/api/display/playlist")
+async def get_playlist(screen: str = Query(default="main")):
+    return await database.get_playlist(screen)
+
+
+@app.post("/api/display/playlist/add")
+async def add_to_playlist(
+    file: UploadFile = File(...),
+    screen: str = Query(default="main"),
+):
+    state = get_screen_state(screen)
+    content = await file.read()
+    image_url = _save_upload(content, file.filename or "photo.jpg")
+    img_id = await database.add_playlist_image(screen, image_url)
+    playlist_items = await database.get_playlist(screen)
+    state.playlist = [item["url"] for item in playlist_items]
+    return {"status": "ok", "id": img_id, "image_url": image_url}
+
+
+@app.delete("/api/display/playlist/{image_id}")
+async def remove_from_playlist(image_id: int, screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    await database.remove_playlist_image(image_id)
+    playlist_items = await database.get_playlist(screen)
+    state.playlist = [item["url"] for item in playlist_items]
+    # If we removed the currently-playing image, move to next or clear
+    if state.mode == "photo_playlist":
+        if state.playlist:
+            state.playlist_idx = min(state.playlist_idx, len(state.playlist) - 1)
+            state.photo_url = state.playlist[state.playlist_idx]
+        else:
+            state.photo_url = None
+        await _broadcast_screen(state)
+    return {"status": "ok"}
+
+
+@app.post("/api/display/playlist/clear")
+async def clear_playlist(screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    await database.clear_playlist(screen)
+    state.playlist = []
+    if state.mode == "photo_playlist":
+        state.photo_url = None
+        state.mode = "blank"
+        state.matrix = blank_matrix(state.rows, state.cols)
+        await _broadcast_screen(state)
+    return {"status": "ok"}
+
+
+@app.post("/api/display/playlist/play")
+async def play_playlist(screen: str = Query(default="main")):
+    """Start playing the playlist on this screen immediately."""
+    state = get_screen_state(screen)
+    playlist_items = await database.get_playlist(screen)
+    state.playlist = [item["url"] for item in playlist_items]
+    if not state.playlist:
+        raise HTTPException(400, "Playlist is empty")
+    state.playlist_idx = 0
+    state.photo_url = state.playlist[0]
+    state.color_matrix = None
+    state.mode = "photo_playlist"
+    await _broadcast_screen(state)
+    return {"status": "ok", "screen": screen}
 
 
 # ── Global settings ───────────────────────────────────────────────────────────
@@ -510,7 +648,6 @@ async def delete_message(msg_id: int):
 async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main")):
     await manager.connect(ws, screen)
 
-    # Bootstrap the new client
     state = _screens.get(screen)
     db_settings = await database.get_settings()
     screens_list = await _screens_payload()
@@ -521,7 +658,15 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
         {"type": "modes_update", "modes": await database.get_modes(screen)},
     ]
     if state:
-        if state.color_matrix is not None:
+        if state.photo_url is not None:
+            initial_msgs.insert(0, {
+                "type": "photo_split",
+                "image_url": state.photo_url,
+                "rows": state.rows,
+                "cols": state.cols,
+                "screen_id": screen,
+            })
+        elif state.color_matrix is not None:
             initial_msgs.insert(0, {
                 "type": "image_update",
                 "color_matrix": state.color_matrix,

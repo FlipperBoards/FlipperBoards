@@ -8,6 +8,12 @@ import {
 
 const MODES = [
   {
+    id: 'photo',
+    label: 'Photo Split',
+    desc: 'Real photo divided across tiles — each shows its literal section, like a puzzle',
+    badge: 'puzzle',
+  },
+  {
     id: 'full',
     label: 'Full Color',
     desc: 'Every tile gets its exact pixel color — true photo mosaic',
@@ -28,14 +34,15 @@ const MODES = [
 ]
 
 export default function ImageUpload({ rows, cols, screenId = 'main' }) {
-  const [mode, setMode] = useState('full')
+  const [mode, setMode] = useState('photo')
   const [preview, setPreview] = useState(null)
-  const [pending, setPending] = useState(null)   // { type: 'matrix'|'color', data }
+  const [pending, setPending] = useState(null)   // { type: 'photo'|'color'|'matrix', data }
   const [processing, setProcessing] = useState(false)
   const [pushed, setPushed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef(null)
   const lastFileRef = useRef(null)
+  const previewBlobRef = useRef(null)
 
   const process = useCallback(async (file, selectedMode) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -43,10 +50,22 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     setPreview(null)
     setPending(null)
     setPushed(false)
+
+    // Release previous blob URL to avoid memory leaks
+    if (previewBlobRef.current) {
+      URL.revokeObjectURL(previewBlobRef.current)
+      previewBlobRef.current = null
+    }
+
     lastFileRef.current = file
 
     try {
-      if (selectedMode === 'full') {
+      if (selectedMode === 'photo') {
+        const url = URL.createObjectURL(file)
+        previewBlobRef.current = url
+        setPreview(url)
+        setPending({ type: 'photo', data: file })
+      } else if (selectedMode === 'full') {
         const cm = await imageToColorMatrix(file, rows, cols)
         const canvas = colorMatrixToPreviewCanvas(cm, rows, cols, 12)
         setPreview(canvas.toDataURL())
@@ -75,7 +94,11 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     if (!pending) return
     const qs = `?screen=${encodeURIComponent(screenId)}`
 
-    if (pending.type === 'color') {
+    if (pending.type === 'photo') {
+      const fd = new FormData()
+      fd.append('file', pending.data)
+      await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
+    } else if (pending.type === 'color') {
       await fetch(`/api/display/color-matrix${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,10 +118,10 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-mono text-gray-200 font-semibold tracking-wider uppercase">
-        Image Mosaic
+        Image Push
       </h2>
       <p className="text-xs text-gray-500 font-mono">
-        Upload any image — each tile becomes one pixel. Switching modes re-processes
+        Upload any image and push it to the display immediately. Switching modes re-processes
         the same image instantly.
       </p>
 
@@ -148,7 +171,9 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
             <div className="text-4xl mb-2">🖼️</div>
             <div className="text-gray-400 font-mono text-sm">DROP IMAGE or CLICK TO BROWSE</div>
             <div className="text-gray-600 font-mono text-xs mt-1">
-              Will be sampled at {cols}×{rows} tiles
+              {mode === 'photo'
+                ? `Will be divided across ${cols}×${rows} tiles`
+                : `Will be sampled at ${cols}×${rows} tiles`}
             </div>
           </>
         )}
@@ -166,14 +191,25 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
             </div>
           </div>
 
-          {/* Preview image */}
-          <div className="overflow-hidden rounded-lg border border-gray-700 bg-black">
+          {/* Preview image — with tile grid overlay for photo split mode */}
+          <div className="overflow-hidden rounded-lg border border-gray-700 bg-black relative">
             <img
               src={preview}
               alt="Tile preview"
               className="w-full"
-              style={{ imageRendering: 'pixelated' }}
+              style={{ imageRendering: mode === 'photo' ? 'auto' : 'pixelated', display: 'block' }}
             />
+            {mode === 'photo' && (
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  backgroundImage: `
+                    repeating-linear-gradient(to right, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 1px, transparent 1px, transparent calc(100% / ${cols})),
+                    repeating-linear-gradient(to bottom, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 1px, transparent 1px, transparent calc(100% / ${rows}))
+                  `,
+                }}
+              />
+            )}
           </div>
 
           <div className="flex gap-2">
@@ -198,11 +234,11 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
       {/* Tips */}
       <div className="bg-gray-900 rounded-lg p-3 space-y-1.5">
         <div className="text-xs text-gray-600 font-mono uppercase tracking-wider mb-2">Tips</div>
-        <div className="text-xs text-gray-500 font-mono">· Full Color: best for photos and artwork — exact RGB per tile</div>
+        <div className="text-xs text-gray-500 font-mono">· Photo Split: actual photo divided across tiles — great for logos &amp; artwork on Zoom backgrounds</div>
+        <div className="text-xs text-gray-500 font-mono">· Full Color: exact RGB per tile — best for photos and artwork</div>
         <div className="text-xs text-gray-500 font-mono">· 8-Color: bold graphic look, great for logos and icons</div>
         <div className="text-xs text-gray-500 font-mono">· Mono: high-contrast images work best, like faces or silhouettes</div>
-        <div className="text-xs text-gray-500 font-mono">· Square crop your image first for best fit on square grids</div>
-        <div className="text-xs text-gray-500 font-mono">· Switching modes re-processes without re-uploading</div>
+        <div className="text-xs text-gray-500 font-mono">· Use the Playlist tab to build a queue of photos that rotate automatically</div>
       </div>
     </div>
   )

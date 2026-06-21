@@ -5,6 +5,7 @@ import TextInput from './TextInput'
 import ModeSelector from './ModeSelector'
 import SettingsPanel from './SettingsPanel'
 import ImageUpload from './ImageUpload'
+import ImagePlaylist from './ImagePlaylist'
 import ScreenManager from './ScreenManager'
 import { useDisplayState } from '../../hooks/useDisplayState'
 
@@ -13,6 +14,7 @@ const TABS = [
   { id: 'display', label: 'Modes' },
   { id: 'text', label: 'Text' },
   { id: 'image', label: 'Image' },
+  { id: 'playlist', label: 'Playlist' },
   { id: 'settings', label: 'Settings' },
 ]
 
@@ -20,7 +22,7 @@ export default function RemoteControl() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeScreenId = searchParams.get('screen') || 'main'
 
-  const { matrix, colorMatrix, rows, cols, mode, appSettings, modes, screens, connected } =
+  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected } =
     useDisplayState(activeScreenId)
 
   const [activeTab, setActiveTab] = useState('display')
@@ -82,6 +84,7 @@ export default function RemoteControl() {
             <SplitFlapDisplay
               matrix={matrix}
               colorMatrix={colorMatrix}
+              photoUrl={photoUrl}
               rows={rows}
               cols={cols}
               tileColor={tileColor}
@@ -148,6 +151,13 @@ export default function RemoteControl() {
           )}
           {activeTab === 'image' && (
             <ImageUpload
+              rows={rows}
+              cols={cols}
+              screenId={activeScreenId}
+            />
+          )}
+          {activeTab === 'playlist' && (
+            <ImagePlaylist
               rows={rows}
               cols={cols}
               screenId={activeScreenId}
