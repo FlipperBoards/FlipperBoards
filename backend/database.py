@@ -50,6 +50,7 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "news_categories": '["technology","general"]',
         "news_sources": "[]",
         "calendar_ical_url": "",
+        "sound_enabled": "true",
     }
     for key, value in defaults.items():
         await db.execute(

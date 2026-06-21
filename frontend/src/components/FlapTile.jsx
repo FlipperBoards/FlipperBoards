@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { CHARS, COLOR_HEX, isColorCode, codeToChar } from '../utils/charmap'
+import { playFlipSound } from '../utils/audio'
 
 // Number of intermediate frames when animating between characters
 const FLIP_STEPS = 3
 const STEP_DELAY_MS = 60
 
 function getIntermediateChars(fromCode, toCode) {
-  // Cycle forward through char set from fromCode to toCode
   const total = CHARS.length
   const steps = []
   let idx = fromCode
@@ -16,7 +16,6 @@ function getIntermediateChars(fromCode, toCode) {
     if (idx !== toCode) steps.push(idx)
     count++
   }
-  // Only take up to FLIP_STEPS intermediates
   const stride = Math.max(1, Math.floor(steps.length / FLIP_STEPS))
   const sampled = []
   for (let i = 0; i < steps.length; i += stride) {
@@ -26,7 +25,14 @@ function getIntermediateChars(fromCode, toCode) {
   return sampled
 }
 
-export default function FlapTile({ code = 0, tileColor = '#ffffff', tileBgColor = '#2a2a2a', size = 'md' }) {
+export default function FlapTile({
+  code = 0,
+  tileColor = '#ffffff',
+  tileBgColor = '#2a2a2a',
+  size = 'md',
+  delay = 0,        // stagger delay in ms
+  soundEnabled = true,
+}) {
   const [displayCode, setDisplayCode] = useState(code)
   const [isFlipping, setIsFlipping] = useState(false)
   const [foldChar, setFoldChar] = useState(codeToChar(code))
@@ -48,31 +54,35 @@ export default function FlapTile({ code = 0, tileColor = '#ffffff', tileBgColor 
     const fromCode = prevCodeRef.current
     prevCodeRef.current = code
 
-    // Clear any pending animations
     animTimers.current.forEach(clearTimeout)
     animTimers.current = []
 
     const intermediates = getIntermediateChars(fromCode, code)
     const sequence = [...intermediates, code]
 
-    sequence.forEach((stepCode, i) => {
-      const t = setTimeout(() => {
-        setFoldChar(codeToChar(stepCode))
-        setRiseChar(codeToChar(stepCode))
-        setIsFlipping(true)
-        const t2 = setTimeout(() => {
-          setDisplayCode(stepCode)
-          setIsFlipping(stepCode !== code)
-        }, STEP_DELAY_MS)
-        animTimers.current.push(t2)
-      }, i * (STEP_DELAY_MS + 10))
-      animTimers.current.push(t)
-    })
+    // Apply stagger delay before starting animation
+    const staggerTimer = setTimeout(() => {
+      sequence.forEach((stepCode, i) => {
+        const t = setTimeout(() => {
+          setFoldChar(codeToChar(stepCode))
+          setRiseChar(codeToChar(stepCode))
+          setIsFlipping(true)
+          if (soundEnabled && i === 0) playFlipSound()
+          const t2 = setTimeout(() => {
+            setDisplayCode(stepCode)
+            setIsFlipping(stepCode !== code)
+          }, STEP_DELAY_MS)
+          animTimers.current.push(t2)
+        }, i * (STEP_DELAY_MS + 10))
+        animTimers.current.push(t)
+      })
+    }, delay)
+    animTimers.current.push(staggerTimer)
 
     return () => {
       animTimers.current.forEach(clearTimeout)
     }
-  }, [code])
+  }, [code, delay, soundEnabled])
 
   const isColor = isColorCode(displayCode)
   const targetIsColor = isColorCode(code)
