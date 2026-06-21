@@ -1,5 +1,7 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef } from 'react'
 import FlapTile from './FlapTile'
+
+const STAGGER_MS_PER_COL = 30  // delay increment per column position
 
 export default function SplitFlapDisplay({
   matrix = [],
@@ -9,7 +11,10 @@ export default function SplitFlapDisplay({
   tileBgColor = '#2a2a2a',
   bgColor = '#1a1a1a',
   tileSize = 'md',
+  soundEnabled = true,
 }) {
+  const prevMatrixRef = useRef([])
+
   // Ensure matrix is always rows×cols
   const normalizedMatrix = useMemo(() => {
     const result = []
@@ -23,6 +28,24 @@ export default function SplitFlapDisplay({
     }
     return result
   }, [matrix, rows, cols])
+
+  // Build stagger delay map: tiles that changed get a delay based on column
+  const staggerMap = useMemo(() => {
+    const map = []
+    for (let r = 0; r < rows; r++) {
+      const row = []
+      for (let c = 0; c < cols; c++) {
+        const prevCode = prevMatrixRef.current?.[r]?.[c] ?? -1
+        const newCode = normalizedMatrix[r]?.[c] ?? 0
+        const changed = prevCode !== newCode
+        row.push(changed ? c * STAGGER_MS_PER_COL : 0)
+      }
+      map.push(row)
+    }
+    prevMatrixRef.current = normalizedMatrix
+    return map
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalizedMatrix])
 
   return (
     <div
@@ -46,10 +69,7 @@ export default function SplitFlapDisplay({
       </div>
 
       {/* Tile grid */}
-      <div
-        className="flex flex-col"
-        style={{ gap: '3px' }}
-      >
+      <div className="flex flex-col" style={{ gap: '3px' }}>
         {normalizedMatrix.map((row, r) => (
           <div key={r} className="flex" style={{ gap: '2px' }}>
             {row.map((code, c) => (
@@ -59,6 +79,8 @@ export default function SplitFlapDisplay({
                 tileColor={tileColor}
                 tileBgColor={tileBgColor}
                 size={tileSize}
+                delay={staggerMap[r]?.[c] ?? 0}
+                soundEnabled={soundEnabled}
               />
             ))}
           </div>

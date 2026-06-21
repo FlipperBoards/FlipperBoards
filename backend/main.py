@@ -210,6 +210,7 @@ class SettingsUpdate(BaseModel):
     news_categories: Optional[list[str]] = None
     news_sources: Optional[list[str]] = None
     calendar_ical_url: Optional[str] = None
+    sound_enabled: Optional[bool] = None
 
 
 class ModeUpdate(BaseModel):

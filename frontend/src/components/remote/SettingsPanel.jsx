@@ -43,6 +43,7 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       weather_api_key: s.weather_api_key || '',
       news_api_key: s.news_api_key || '',
       calendar_ical_url: s.calendar_ical_url || '',
+      sound_enabled: s.sound_enabled !== 'false',
     }
     await fetch('/api/settings', {
       method: 'PUT',
@@ -221,6 +222,20 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       </section>
 
       {/* Save */}
+      {/* Sound */}
+      <section className="space-y-3">
+        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
+          Sound
+        </div>
+        <Field label="Flip Sound Effects">
+          <select value={s.sound_enabled === 'false' ? 'false' : 'true'}
+            onChange={e => handleChange('sound_enabled', e.target.value)} className={selectCls}>
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+        </Field>
+      </section>
+
       <button
         onClick={save}
         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-mono font-semibold rounded-xl py-3 transition-colors tracking-widest uppercase"
