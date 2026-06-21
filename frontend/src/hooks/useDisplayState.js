@@ -3,7 +3,8 @@ import { useWebSocket } from './useWebSocket'
 
 export function useDisplayState(screenId = 'main') {
   const [matrix, setMatrix] = useState([])
-  const [colorMatrix, setColorMatrix] = useState(null)  // null = character mode, string[][] = full-color
+  const [colorMatrix, setColorMatrix] = useState(null)
+  const [photoUrl, setPhotoUrl] = useState(null)
   const [rows, setRows] = useState(6)
   const [cols, setCols] = useState(22)
   const [mode, setMode] = useState('clock')
@@ -14,22 +15,34 @@ export function useDisplayState(screenId = 'main') {
 
   const handleMessage = useCallback((data) => {
     setConnected(true)
+    const forMe = !data.screen_id || data.screen_id === screenId
     switch (data.type) {
       case 'display_update':
-        if (!data.screen_id || data.screen_id === screenId) {
+        if (forMe) {
           setMatrix(data.matrix || [])
           setRows(data.rows || 6)
           setCols(data.cols || 22)
           setMode(data.mode || 'clock')
-          setColorMatrix(null)  // leaving image mode — clear color matrix
+          setColorMatrix(null)
+          setPhotoUrl(null)
         }
         break
       case 'image_update':
-        if (!data.screen_id || data.screen_id === screenId) {
+        if (forMe) {
           setColorMatrix(data.color_matrix || null)
+          setPhotoUrl(null)
           setRows(data.rows || rows)
           setCols(data.cols || cols)
           setMode('image_push')
+        }
+        break
+      case 'photo_split':
+        if (forMe) {
+          setPhotoUrl(data.image_url || null)
+          setColorMatrix(null)
+          setRows(data.rows || rows)
+          setCols(data.cols || cols)
+          setMode('photo_push')
         }
         break
       case 'settings_update':
@@ -46,5 +59,5 @@ export function useDisplayState(screenId = 'main') {
 
   useWebSocket(handleMessage, screenId)
 
-  return { matrix, colorMatrix, rows, cols, mode, appSettings, modes, screens, connected }
+  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected }
 }

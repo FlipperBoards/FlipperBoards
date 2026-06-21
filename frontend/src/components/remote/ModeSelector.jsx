@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
 
 const MODE_META = {
-  clock:    { label: 'Clock',          icon: '🕐', desc: 'Live time & date' },
-  weather:  { label: 'Weather',        icon: '🌤', desc: 'Current conditions' },
-  news:     { label: 'News',           icon: '📰', desc: 'Top headlines' },
-  quotes:   { label: 'Quotes',         icon: '💬', desc: 'Inspirational quotes' },
-  calendar: { label: 'Calendar',       icon: '📅', desc: 'Upcoming events' },
-  text:     { label: 'Text Messages',  icon: '✏️', desc: 'Custom messages' },
+  clock:          { label: 'Clock',          icon: '🕐', desc: 'Live time & date' },
+  weather:        { label: 'Weather',        icon: '🌤', desc: 'Current conditions' },
+  news:           { label: 'News',           icon: '📰', desc: 'Top headlines' },
+  quotes:         { label: 'Quotes',         icon: '💬', desc: 'Inspirational quotes' },
+  calendar:       { label: 'Calendar',       icon: '📅', desc: 'Upcoming events' },
+  text:           { label: 'Text Messages',  icon: '✏️', desc: 'Custom messages' },
+  photo_playlist: { label: 'Photo Playlist', icon: '🖼️', desc: 'Cycle through uploaded photos' },
 }
 
 export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
