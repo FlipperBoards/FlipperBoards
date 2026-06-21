@@ -30,6 +30,8 @@ export default function FlapTile({
   tileColor = '#ffffff',
   tileBgColor = '#2a2a2a',
   size = 'md',
+  tileWidth = null,   // explicit px — overrides size preset
+  tileHeight = null,  // explicit px — overrides size preset
   delay = 0,
   soundEnabled = true,
   extraShadow = undefined,  // additional CSS box-shadow for physical mode
@@ -42,13 +44,16 @@ export default function FlapTile({
   const animTimers = useRef([])
 
   const sizeMap = {
-    xs: { tile: 'w-5 h-7', text: 'text-[10px]', gap: '1px' },
-    sm: { tile: 'w-7 h-9', text: 'text-xs', gap: '1px' },
-    md: { tile: 'w-10 h-14', text: 'text-base', gap: '2px' },
-    lg: { tile: 'w-14 h-20', text: 'text-xl', gap: '2px' },
-    xl: { tile: 'w-20 h-28', text: 'text-3xl', gap: '3px' },
+    xs: { w: 20,  h: 28,  fs: 10 },
+    sm: { w: 28,  h: 36,  fs: 12 },
+    md: { w: 40,  h: 56,  fs: 16 },
+    lg: { w: 56,  h: 80,  fs: 20 },
+    xl: { w: 80,  h: 112, fs: 30 },
   }
-  const sz = sizeMap[size] || sizeMap.md
+  const preset = sizeMap[size] || sizeMap.md
+  const w  = tileWidth  ?? preset.w
+  const h  = tileHeight ?? preset.h
+  const fs = tileWidth  ? Math.max(9, Math.floor(Math.min(w, h) * 0.52)) : preset.fs
 
   useEffect(() => {
     if (code === prevCodeRef.current) return
@@ -95,82 +100,41 @@ export default function FlapTile({
     letterSpacing: '0.02em',
   }
 
+  const tileStyle = { width: w, height: h, boxShadow: extraShadow }
+  const textStyle = { fontSize: fs, lineHeight: 1 }
+
   if (isColor || targetIsColor) {
     const hex = COLOR_HEX[isColor ? displayCode : code] || '#f1faee'
     return (
-      <div
-        className={`flap-tile ${sz.tile} rounded-sm`}
-        style={{ background: hex, boxShadow: extraShadow }}
-      />
+      <div className="flap-tile rounded-sm" style={{ ...tileStyle, background: hex }} />
     )
   }
 
   return (
-    <div
-      className={`flap-tile ${sz.tile} select-none`}
-      style={{ boxShadow: extraShadow }}
-    >
+    <div className="flap-tile select-none" style={tileStyle}>
       {/* Top half — shows top of current char */}
-      <div
-        className="flap-top"
-        style={{
-          height: '50%',
-          background: tileBgColor,
-          color: tileColor,
-          ...fontStyle,
-        }}
-      >
-        <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(50%)' }}>
-          {char}
-        </span>
+      <div className="flap-top" style={{ height: '50%', background: tileBgColor, color: tileColor, ...fontStyle }}>
+        <span style={{ ...textStyle, transform: 'translateY(50%)' }}>{char}</span>
       </div>
 
       {/* Bottom half — shows bottom of current char */}
-      <div
-        className="flap-bottom"
-        style={{
-          height: '50%',
-          background: tileBgColor,
-          color: tileColor,
-          ...fontStyle,
-        }}
-      >
-        <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(-50%)' }}>
-          {char}
-        </span>
+      <div className="flap-bottom" style={{ height: '50%', background: tileBgColor, color: tileColor, ...fontStyle }}>
+        <span style={{ ...textStyle, transform: 'translateY(-50%)' }}>{char}</span>
       </div>
 
       {/* Fold-down animation — top half folding away */}
       {isFlipping && (
-        <div
-          key={`fold-${foldChar}-${Date.now()}`}
-          className="flap-fold animate"
-          style={{
-            background: tileBgColor,
-            color: tileColor,
-            ...fontStyle,
-          }}
-        >
-          <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(50%)' }}>
-            {foldChar}
-          </span>
+        <div key={`fold-${foldChar}-${Date.now()}`} className="flap-fold animate"
+          style={{ background: tileBgColor, color: tileColor, ...fontStyle }}>
+          <span style={{ ...textStyle, transform: 'translateY(50%)' }}>{foldChar}</span>
         </div>
       )}
 
       {/* Rise animation — bottom half of next char appearing */}
       {isFlipping && (
-        <div
-          key={`rise-${riseChar}-${Date.now()}`}
-          className="flap-rise animate"
-          style={{
-            background: tileBgColor,
-            color: tileColor,
-            ...fontStyle,
-          }}
-        >
-          <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(-50%)' }}>
-            {riseChar}
-          </span>
+        <div key={`rise-${riseChar}-${Date.now()}`} className="flap-rise animate"
+          style={{ background: tileBgColor, color: tileColor, ...fontStyle }}>
+          <span style={{ ...textStyle, transform: 'translateY(-50%)' }}>{riseChar}</span>
         </div>
       )}
     </div>

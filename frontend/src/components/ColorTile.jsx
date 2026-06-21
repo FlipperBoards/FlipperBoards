@@ -19,8 +19,9 @@ function rgbToHex(r, g, b) {
   return `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`
 }
 
-export default function ColorTile({ color = '#1a1a1a', size = 'md', delay = 0, physicalMode = false }) {
-  const sz = SIZE_MAP[size] || SIZE_MAP.md
+export default function ColorTile({ color = '#1a1a1a', size = 'md', tileWidth = null, tileHeight = null, delay = 0, physicalMode = false }) {
+  const preset = SIZE_MAP[size] || SIZE_MAP.md
+  const sz = { w: tileWidth ?? preset.w, h: tileHeight ?? preset.h }
   const topRef = useRef(null)
   const botRef = useRef(null)
   const prevColorRef = useRef(color)
