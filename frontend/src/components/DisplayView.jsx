@@ -104,7 +104,7 @@ export default function DisplayView() {
       {!kiosk && (
         <div
           className="fixed top-4 left-0 right-0 flex items-center justify-between px-4 transition-opacity duration-700"
-          style={{ opacity: showControls ? 1 : 0, pointerEvents: showControls ? 'auto' : 'none' }}
+          style={{ opacity: showControls ? 1 : 0, pointerEvents: showControls ? 'auto' : 'none', zIndex: 10 }}
         >
           <div className="text-xs font-mono tracking-widest opacity-30" style={{ color: tileColor }}>
             {screenId !== 'main' && <span className="opacity-60">{screenId} · </span>}
@@ -143,7 +143,7 @@ export default function DisplayView() {
 
       {!audioUnlocked && !kiosk && (
         <div className="fixed bottom-6 left-0 right-0 text-center text-xs font-mono opacity-20"
-          style={{ color: tileColor }}>
+          style={{ color: tileColor, zIndex: 10 }}>
           TAP TO ENABLE SOUND
         </div>
       )}
