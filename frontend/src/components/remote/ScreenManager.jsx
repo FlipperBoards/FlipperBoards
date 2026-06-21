@@ -46,31 +46,33 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
     onRefresh()
   }
 
-  const inputCls = "bg-gray-800 text-white font-mono text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-blue-500 focus:outline-none"
-
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-mono text-gray-200 font-semibold tracking-wider uppercase">
+        <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
           Screens
         </h2>
         <button
           onClick={() => setCreating(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-mono text-xs rounded-lg px-3 py-1.5 transition-colors"
+          className="fb-btn-primary text-[11px] px-3 py-1.5"
         >
-          + NEW SCREEN
+          + New Screen
         </button>
       </div>
 
-      <p className="text-xs text-gray-600 font-mono">
-        Each screen is independent. Open <code className="text-gray-400">/display?screen=ID</code> in any browser,
-        cast tab, or go fullscreen. Unlimited screens supported.
+      <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>
+        Open <code style={{ color: 'var(--text-2)' }}>/display?screen=ID</code> in any
+        browser or cast tab. Each screen runs independently.
       </p>
 
       {/* Create form */}
       {creating && (
-        <div className="bg-gray-800 rounded-xl p-4 border border-blue-800 space-y-3">
-          <div className="text-xs text-blue-400 font-mono uppercase tracking-wider">New Screen</div>
+        <div
+          className="rounded-xl p-4 space-y-3"
+          style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}
+        >
+          <p className="section-label" style={{ color: 'var(--accent)' }}>New Screen</p>
           <input
             autoFocus
             type="text"
@@ -78,34 +80,28 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
             value={newName}
             onChange={e => setNewName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && createScreen()}
-            className={`${inputCls} w-full`}
+            className="fb-input"
           />
-          <div className="text-xs text-gray-600 font-mono">
-            ID: <span className="text-gray-400">{slugify(newName) || '...'}</span>
-          </div>
+          <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+            ID: <span style={{ color: 'var(--text-2)' }}>{slugify(newName) || '…'}</span>
+          </p>
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-xs text-gray-500 font-mono">Rows</label>
+              <p className="section-label mb-1">Rows</p>
               <input type="number" min={1} max={20} value={newRows}
                 onChange={e => setNewRows(Number(e.target.value))}
-                className={`${inputCls} w-full mt-1`} />
+                className="fb-input" />
             </div>
             <div className="flex-1">
-              <label className="text-xs text-gray-500 font-mono">Cols</label>
+              <p className="section-label mb-1">Cols</p>
               <input type="number" min={1} max={60} value={newCols}
                 onChange={e => setNewCols(Number(e.target.value))}
-                className={`${inputCls} w-full mt-1`} />
+                className="fb-input" />
             </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={createScreen}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-mono text-sm rounded-lg py-2 transition-colors">
-              CREATE
-            </button>
-            <button onClick={() => setCreating(false)}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 font-mono text-sm rounded-lg py-2 transition-colors">
-              CANCEL
-            </button>
+          <div className="flex gap-2 pt-1">
+            <button onClick={createScreen} className="fb-btn-primary flex-1">Create</button>
+            <button onClick={() => setCreating(false)} className="fb-btn-ghost flex-1">Cancel</button>
           </div>
         </div>
       )}
@@ -115,68 +111,79 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
         {screens.map(screen => (
           <div key={screen.id}>
             {editingId === screen.id ? (
-              <div className="bg-gray-800 rounded-xl p-3 border border-yellow-800 space-y-2">
+              <div
+                className="rounded-xl p-3 space-y-2"
+                style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.25)' }}
+              >
                 <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
-                  className={`${inputCls} w-full`} />
+                  className="fb-input" />
                 <div className="flex gap-2">
                   <input type="number" min={1} max={20} value={editRows}
                     onChange={e => setEditRows(Number(e.target.value))}
-                    className={`${inputCls} flex-1`} placeholder="Rows" />
+                    className="fb-input" placeholder="Rows" />
                   <input type="number" min={1} max={60} value={editCols}
                     onChange={e => setEditCols(Number(e.target.value))}
-                    className={`${inputCls} flex-1`} placeholder="Cols" />
+                    className="fb-input" placeholder="Cols" />
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => saveEdit(screen.id)}
-                    className="flex-1 bg-yellow-700 hover:bg-yellow-600 text-white font-mono text-sm rounded-lg py-1.5 transition-colors">
-                    SAVE
+                    className="flex-1 text-xs font-mono font-semibold uppercase tracking-wider rounded-lg py-1.5 transition-colors"
+                    style={{ background: '#854d0e', color: '#fff' }}>
+                    Save
                   </button>
-                  <button onClick={() => setEditingId(null)}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 font-mono text-sm rounded-lg py-1.5 transition-colors">
-                    CANCEL
-                  </button>
+                  <button onClick={() => setEditingId(null)} className="fb-btn-ghost flex-1 py-1.5">Cancel</button>
                 </div>
               </div>
             ) : (
               <div
-                className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-all cursor-pointer ${
-                  activeScreenId === screen.id
-                    ? 'bg-blue-900/30 border-blue-700'
-                    : 'bg-gray-800 border-gray-700 hover:border-gray-500'
-                }`}
+                className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all"
+                style={{
+                  background: activeScreenId === screen.id ? 'var(--accent-dim)' : 'var(--surface)',
+                  border: `1px solid ${activeScreenId === screen.id ? 'var(--accent-border)' : 'var(--border)'}`,
+                }}
                 onClick={() => onSelectScreen(screen.id)}
               >
                 {/* Status dot */}
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  screen.online ? 'bg-green-400' : 'bg-gray-600'
-                }`} />
+                <span
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{
+                    background: screen.online ? '#4ade80' : 'var(--text-3)',
+                    boxShadow: screen.online ? '0 0 6px #4ade80' : 'none',
+                  }}
+                />
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-gray-200 font-semibold truncate">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>
                       {screen.name}
                     </span>
                     {screen.id === 'main' && (
-                      <span className="text-xs text-gray-600 font-mono">(default)</span>
+                      <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>default</span>
                     )}
                     {activeScreenId === screen.id && (
-                      <span className="text-xs text-blue-400 font-mono">● active</span>
+                      <span className="text-[10px] font-mono" style={{ color: 'var(--accent)' }}>● active</span>
                     )}
                   </div>
-                  <div className="text-xs text-gray-600 font-mono">
+                  <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-3)' }}>
                     {screen.id} · {screen.rows}×{screen.cols} · {screen.mode?.toUpperCase()}
                   </div>
                 </div>
 
-                {/* Display link */}
+                {/* Open display */}
                 <a
                   href={`/display?screen=${screen.id}`}
                   target="_blank"
                   rel="noreferrer"
                   onClick={e => e.stopPropagation()}
-                  className="text-xs font-mono text-gray-500 hover:text-blue-400 transition-colors px-2 py-1 rounded border border-gray-700 hover:border-blue-600"
+                  className="text-[10px] font-mono px-2 py-1 rounded-lg transition-all flex-shrink-0"
+                  style={{
+                    color: 'var(--text-3)',
+                    border: '1px solid var(--border)',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.borderColor = 'var(--accent-border)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderColor = 'var(--border)' }}
                 >
-                  OPEN ↗
+                  Open ↗
                 </a>
 
                 {/* Edit */}
@@ -188,32 +195,39 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
                     setEditRows(screen.rows)
                     setEditCols(screen.cols)
                   }}
-                  className="text-gray-600 hover:text-yellow-400 transition-colors text-sm px-1"
+                  className="transition-colors text-sm px-1 flex-shrink-0"
+                  style={{ color: 'var(--text-3)' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#eab308' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)' }}
                   title="Edit"
                 >
                   ✎
                 </button>
 
-                {/* Delete (not for main) */}
+                {/* Delete */}
                 {screen.id !== 'main' && (
                   confirmDelete === screen.id ? (
-                    <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                    <div className="flex gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
                       <button onClick={() => deleteScreen(screen.id)}
-                        className="text-xs font-mono bg-red-700 hover:bg-red-600 text-white rounded px-2 py-0.5 transition-colors">
-                        YES
+                        className="text-[10px] font-mono font-semibold rounded px-2 py-0.5 transition-colors"
+                        style={{ background: '#dc2626', color: '#fff' }}>
+                        Yes
                       </button>
                       <button onClick={() => setConfirmDelete(null)}
-                        className="text-xs font-mono bg-gray-700 hover:bg-gray-600 text-gray-300 rounded px-2 py-0.5 transition-colors">
-                        NO
+                        className="fb-btn-ghost text-[10px] px-2 py-0.5 rounded">
+                        No
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={e => { e.stopPropagation(); setConfirmDelete(screen.id) }}
-                      className="text-gray-600 hover:text-red-400 transition-colors text-sm px-1"
+                      className="text-sm px-1 transition-colors flex-shrink-0"
+                      style={{ color: 'var(--text-3)' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#ef4444' }}
+                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)' }}
                       title="Delete"
                     >
-                      ✕
+                      ×
                     </button>
                   )
                 )}
@@ -223,13 +237,16 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
         ))}
       </div>
 
-      {/* Cast / fullscreen tips */}
-      <div className="bg-gray-900 rounded-lg p-3 space-y-1.5">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-wider mb-2">Display Tips</div>
-        <div className="text-xs text-gray-500 font-mono">· Press F11 or use the ⊞ button on the display page for fullscreen</div>
-        <div className="text-xs text-gray-500 font-mono">· In Chrome: three-dot menu → Cast → Cast tab to a Chromecast</div>
-        <div className="text-xs text-gray-500 font-mono">· Add <code className="text-gray-400">?kiosk=1</code> to hide all UI chrome</div>
-        <div className="text-xs text-gray-500 font-mono">· Each screen can show different content simultaneously</div>
+      {/* Tips */}
+      <div
+        className="rounded-xl p-4 space-y-1.5"
+        style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+      >
+        <p className="section-label mb-2">Display Tips</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· F11 or ⊞ button for fullscreen</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Chrome: ⋮ → Cast → Cast tab to Chromecast</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Add <code style={{ color: 'var(--text-2)' }}>?kiosk=1</code> to hide all UI</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Multiple screens can show different content simultaneously</p>
       </div>
     </div>
   )

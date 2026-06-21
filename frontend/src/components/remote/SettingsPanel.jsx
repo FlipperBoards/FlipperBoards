@@ -15,277 +15,250 @@ const TILE_PRESETS = [
   { label: 'Red',     tileColor: '#ff5252', tileBgColor: '#1a0a0a', bgColor: '#0d0505' },
 ]
 
+const WOOD_PRESETS = [
+  { label: 'Black',      color: '#0a0a0a' },
+  { label: 'Dark Wood',  color: '#3d2b1f' },
+  { label: 'Walnut',     color: '#5c3d2e' },
+  { label: 'Light Wood', color: '#8b6914' },
+  { label: 'Steel',      color: '#4a4a4a' },
+]
+
+function Section({ title, children }) {
+  return (
+    <section
+      className="rounded-xl p-4 space-y-3"
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+    >
+      <p className="section-label">{title}</p>
+      {children}
+    </section>
+  )
+}
+
+function Field({ label, children }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="section-label">{label}</label>
+      {children}
+    </div>
+  )
+}
+
 export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
   const [s, setS] = useState(initialSettings || {})
   const [saved, setSaved] = useState(false)
 
-  useEffect(() => {
-    setS(initialSettings || {})
-  }, [initialSettings])
+  useEffect(() => { setS(initialSettings || {}) }, [initialSettings])
 
-  const handleChange = (key, value) => {
-    setS(prev => ({ ...prev, [key]: value }))
-  }
+  const set = (key, value) => setS(prev => ({ ...prev, [key]: value }))
 
   const save = async () => {
-    const body = {
-      rows: Number(s.rows) || 6,
-      cols: Number(s.cols) || 22,
-      rotation_interval: Number(s.rotation_interval) || 30,
-      tile_color: s.tile_color || '#ffffff',
-      bg_color: s.bg_color || '#111111',
-      tile_bg_color: s.tile_bg_color || '#222222',
-      timezone: s.timezone || 'UTC',
-      clock_format: s.clock_format || '12h',
-      show_date: s.show_date !== 'false',
-      weather_location: s.weather_location || '',
-      weather_units: s.weather_units || 'imperial',
-      weather_api_key: s.weather_api_key || '',
-      news_api_key: s.news_api_key || '',
-      calendar_ical_url: s.calendar_ical_url || '',
-      sound_enabled: s.sound_enabled !== 'false',
-      divider_width: Number(s.divider_width) || 4,
-      divider_color: s.divider_color || '#111111',
-      physical_mode: s.physical_mode === 'true',
-    }
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        rows:              Number(s.rows) || 6,
+        cols:              Number(s.cols) || 22,
+        rotation_interval: Number(s.rotation_interval) || 30,
+        tile_color:        s.tile_color        || '#ffffff',
+        bg_color:          s.bg_color          || '#111111',
+        tile_bg_color:     s.tile_bg_color     || '#222222',
+        timezone:          s.timezone          || 'UTC',
+        clock_format:      s.clock_format      || '12h',
+        show_date:         s.show_date !== 'false',
+        weather_location:  s.weather_location  || '',
+        weather_units:     s.weather_units     || 'imperial',
+        weather_api_key:   s.weather_api_key   || '',
+        news_api_key:      s.news_api_key      || '',
+        calendar_ical_url: s.calendar_ical_url || '',
+        sound_enabled:     s.sound_enabled !== 'false',
+        divider_width:     Number(s.divider_width) || 4,
+        divider_color:     s.divider_color     || '#111111',
+        physical_mode:     s.physical_mode === 'true',
+      }),
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
     onUpdate()
   }
 
-  const applyPreset = (preset) => {
-    setS(prev => ({
-      ...prev,
-      tile_color: preset.tileColor,
-      tile_bg_color: preset.tileBgColor,
-      bg_color: preset.bgColor,
-    }))
-  }
-
-  const Field = ({ label, children }) => (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-gray-500 font-mono uppercase tracking-wider">{label}</label>
-      {children}
-    </div>
-  )
-
-  const inputCls = "bg-gray-800 text-white font-mono text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-blue-500 focus:outline-none w-full"
-  const selectCls = inputCls
+  const applyPreset = (preset) =>
+    setS(prev => ({ ...prev, tile_color: preset.tileColor, tile_bg_color: preset.tileBgColor, bg_color: preset.bgColor }))
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-mono text-gray-200 font-semibold tracking-wider uppercase">
+    <div className="space-y-4">
+      <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
         Settings
       </h2>
 
       {/* Display size */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Display
-        </div>
+      <Section title="Display">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Rows">
             <input type="number" min={1} max={12} value={s.rows || 6}
-              onChange={e => handleChange('rows', e.target.value)} className={inputCls} />
+              onChange={e => set('rows', e.target.value)} className="fb-input" />
           </Field>
           <Field label="Columns">
             <input type="number" min={1} max={40} value={s.cols || 22}
-              onChange={e => handleChange('cols', e.target.value)} className={inputCls} />
+              onChange={e => set('cols', e.target.value)} className="fb-input" />
           </Field>
         </div>
-        <Field label="Rotation Interval (seconds)">
-          <input type="number" min={5} max={3600} value={s.rotation_interval || 30}
-            onChange={e => handleChange('rotation_interval', e.target.value)} className={inputCls} />
+        <Field label="Rotation Interval">
+          <div className="flex items-center gap-2">
+            <input type="number" min={5} max={3600} value={s.rotation_interval || 30}
+              onChange={e => set('rotation_interval', e.target.value)} className="fb-input" />
+            <span className="text-[11px] font-mono flex-shrink-0" style={{ color: 'var(--text-3)' }}>sec</span>
+          </div>
         </Field>
-      </section>
+      </Section>
 
       {/* Theme */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Theme
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <Section title="Theme">
+        <div className="flex flex-wrap gap-1.5">
           {TILE_PRESETS.map(preset => (
             <button
               key={preset.label}
               onClick={() => applyPreset(preset)}
-              className="px-3 py-1.5 rounded-lg border border-gray-600 font-mono text-xs transition-colors hover:border-gray-400"
-              style={{ background: preset.bgColor, color: preset.tileColor }}
+              className="px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all"
+              style={{
+                background: preset.bgColor,
+                color: preset.tileColor,
+                border: `1px solid ${preset.tileBgColor}`,
+              }}
             >
               {preset.label}
             </button>
           ))}
         </div>
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Tile Text">
-            <div className="flex items-center gap-2">
-              <input type="color" value={s.tile_color || '#ffffff'}
-                onChange={e => handleChange('tile_color', e.target.value)}
-                className="w-10 h-9 rounded border border-gray-600 cursor-pointer bg-transparent" />
-              <span className="text-xs text-gray-500 font-mono">{s.tile_color || '#ffffff'}</span>
-            </div>
-          </Field>
-          <Field label="Tile BG">
-            <div className="flex items-center gap-2">
-              <input type="color" value={s.tile_bg_color || '#222222'}
-                onChange={e => handleChange('tile_bg_color', e.target.value)}
-                className="w-10 h-9 rounded border border-gray-600 cursor-pointer bg-transparent" />
-              <span className="text-xs text-gray-500 font-mono">{s.tile_bg_color || '#222222'}</span>
-            </div>
-          </Field>
-          <Field label="Background">
-            <div className="flex items-center gap-2">
-              <input type="color" value={s.bg_color || '#111111'}
-                onChange={e => handleChange('bg_color', e.target.value)}
-                className="w-10 h-9 rounded border border-gray-600 cursor-pointer bg-transparent" />
-              <span className="text-xs text-gray-500 font-mono">{s.bg_color || '#111111'}</span>
-            </div>
-          </Field>
+          {[
+            { key: 'tile_color',    label: 'Tile Text',  def: '#ffffff' },
+            { key: 'tile_bg_color', label: 'Tile BG',    def: '#222222' },
+            { key: 'bg_color',      label: 'Background', def: '#111111' },
+          ].map(({ key, label, def }) => (
+            <Field key={key} label={label}>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={s[key] || def}
+                  onChange={e => set(key, e.target.value)}
+                  className="w-9 h-9 rounded-lg cursor-pointer border-0 bg-transparent p-0.5"
+                  style={{ border: '1px solid var(--border)' }}
+                />
+                <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+                  {s[key] || def}
+                </span>
+              </div>
+            </Field>
+          ))}
         </div>
-      </section>
+      </Section>
 
       {/* Clock */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Clock
-        </div>
+      <Section title="Clock">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Format">
-            <select value={s.clock_format || '12h'}
-              onChange={e => handleChange('clock_format', e.target.value)} className={selectCls}>
+            <select value={s.clock_format || '12h'} onChange={e => set('clock_format', e.target.value)} className="fb-input">
               <option value="12h">12-hour</option>
               <option value="24h">24-hour</option>
             </select>
           </Field>
           <Field label="Show Date">
-            <select value={s.show_date === 'false' ? 'false' : 'true'}
-              onChange={e => handleChange('show_date', e.target.value)} className={selectCls}>
+            <select value={s.show_date === 'false' ? 'false' : 'true'} onChange={e => set('show_date', e.target.value)} className="fb-input">
               <option value="true">Yes</option>
               <option value="false">No</option>
             </select>
           </Field>
         </div>
         <Field label="Timezone">
-          <select value={s.timezone || 'UTC'}
-            onChange={e => handleChange('timezone', e.target.value)} className={selectCls}>
-            {TIMEZONES.map(tz => (
-              <option key={tz} value={tz}>{tz}</option>
-            ))}
+          <select value={s.timezone || 'UTC'} onChange={e => set('timezone', e.target.value)} className="fb-input">
+            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
           </select>
         </Field>
-      </section>
+      </Section>
 
       {/* Weather */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Weather <span className="text-gray-700 normal-case">(OpenWeatherMap)</span>
-        </div>
+      <Section title="Weather — OpenWeatherMap">
         <Field label="Location (City, Country)">
           <input type="text" placeholder="Portland,US" value={s.weather_location || ''}
-            onChange={e => handleChange('weather_location', e.target.value)} className={inputCls} />
+            onChange={e => set('weather_location', e.target.value)} className="fb-input" />
         </Field>
         <Field label="API Key">
-          <input type="password" placeholder="OpenWeatherMap API key" value={s.weather_api_key || ''}
-            onChange={e => handleChange('weather_api_key', e.target.value)} className={inputCls} />
+          <input type="password" placeholder="OpenWeatherMap key" value={s.weather_api_key || ''}
+            onChange={e => set('weather_api_key', e.target.value)} className="fb-input" />
         </Field>
         <Field label="Units">
-          <select value={s.weather_units || 'imperial'}
-            onChange={e => handleChange('weather_units', e.target.value)} className={selectCls}>
+          <select value={s.weather_units || 'imperial'} onChange={e => set('weather_units', e.target.value)} className="fb-input">
             <option value="imperial">Imperial (°F)</option>
             <option value="metric">Metric (°C)</option>
           </select>
         </Field>
-      </section>
+      </Section>
 
       {/* News */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          News <span className="text-gray-700 normal-case">(NewsAPI or RSS fallback)</span>
-        </div>
-        <Field label="API Key">
-          <input type="password" placeholder="NewsAPI key (optional)" value={s.news_api_key || ''}
-            onChange={e => handleChange('news_api_key', e.target.value)} className={inputCls} />
+      <Section title="News">
+        <Field label="NewsAPI Key">
+          <input type="password" placeholder="Optional — falls back to RSS" value={s.news_api_key || ''}
+            onChange={e => set('news_api_key', e.target.value)} className="fb-input" />
         </Field>
-      </section>
+      </Section>
 
       {/* Calendar */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Calendar
-        </div>
+      <Section title="Calendar">
         <Field label="iCal URL">
-          <input type="url" placeholder="https://calendar.google.com/calendar/ical/..." value={s.calendar_ical_url || ''}
-            onChange={e => handleChange('calendar_ical_url', e.target.value)} className={inputCls} />
+          <input type="url" placeholder="https://calendar.google.com/calendar/ical/…" value={s.calendar_ical_url || ''}
+            onChange={e => set('calendar_ical_url', e.target.value)} className="fb-input" />
         </Field>
-      </section>
+      </Section>
 
-      {/* Save */}
       {/* Physical Frame */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Physical Frame / Dowel Rods
-        </div>
-        <Field label="Physical Mode">
+      <Section title="Physical Frame / Dowel Rods">
+        <Field label="Frame Mode">
           <select value={s.physical_mode === 'true' ? 'true' : 'false'}
-            onChange={e => handleChange('physical_mode', e.target.value)} className={selectCls}>
+            onChange={e => set('physical_mode', e.target.value)} className="fb-input">
             <option value="false">Standard</option>
-            <option value="true">Physical Frame (inset tiles, thicker frame)</option>
+            <option value="true">Physical Frame (inset tiles)</option>
           </select>
         </Field>
-        <Field label="Divider Width (px) — simulates dowel rod thickness">
+        <Field label={`Divider Width — ${s.divider_width || 4}px`}>
           <input type="range" min={0} max={20} value={s.divider_width || 4}
-            onChange={e => handleChange('divider_width', e.target.value)}
+            onChange={e => set('divider_width', e.target.value)}
             className="w-full accent-blue-500" />
-          <div className="text-xs text-gray-500 font-mono mt-1">{s.divider_width || 4}px</div>
         </Field>
-        <Field label="Divider Color — set to wood grain color for physical look">
-          <div className="flex items-center gap-2">
+        <Field label="Divider Color">
+          <div className="flex items-center gap-2 flex-wrap">
             <input type="color" value={s.divider_color || '#111111'}
-              onChange={e => handleChange('divider_color', e.target.value)}
-              className="w-10 h-9 rounded border border-gray-600 cursor-pointer bg-transparent" />
-            <div className="flex gap-2 flex-wrap">
-              {[
-                { label: 'Black', color: '#0a0a0a' },
-                { label: 'Dark Wood', color: '#3d2b1f' },
-                { label: 'Light Wood', color: '#8b6914' },
-                { label: 'Walnut', color: '#5c3d2e' },
-                { label: 'Steel', color: '#4a4a4a' },
-              ].map(p => (
-                <button key={p.color} onClick={() => handleChange('divider_color', p.color)}
-                  className="text-xs font-mono px-2 py-1 rounded border border-gray-600 hover:border-gray-400 transition-colors"
-                  style={{ background: p.color, color: '#fff' }}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
+              onChange={e => set('divider_color', e.target.value)}
+              className="w-9 h-9 rounded-lg cursor-pointer p-0.5"
+              style={{ border: '1px solid var(--border)', background: 'transparent' }} />
+            {WOOD_PRESETS.map(p => (
+              <button key={p.color} onClick={() => set('divider_color', p.color)}
+                className="text-[10px] font-mono px-2 py-1 rounded transition-colors"
+                style={{ background: p.color, color: '#fff', border: '1px solid rgba(255,255,255,0.1)' }}>
+                {p.label}
+              </button>
+            ))}
           </div>
         </Field>
-      </section>
+      </Section>
 
       {/* Sound */}
-      <section className="space-y-3">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
-          Sound
-        </div>
+      <Section title="Sound">
         <Field label="Flip Sound Effects">
           <select value={s.sound_enabled === 'false' ? 'false' : 'true'}
-            onChange={e => handleChange('sound_enabled', e.target.value)} className={selectCls}>
+            onChange={e => set('sound_enabled', e.target.value)} className="fb-input">
             <option value="true">Enabled</option>
             <option value="false">Disabled</option>
           </select>
         </Field>
-      </section>
+      </Section>
 
       <button
         onClick={save}
-        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-mono font-semibold rounded-xl py-3 transition-colors tracking-widest uppercase"
+        className="fb-btn-primary w-full py-3"
+        style={saved ? { background: '#16a34a' } : {}}
       >
-        {saved ? '✓ SAVED' : 'SAVE SETTINGS'}
+        {saved ? '✓ Saved' : 'Save Settings'}
       </button>
     </div>
   )
