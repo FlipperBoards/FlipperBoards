@@ -1,9 +1,10 @@
 import asyncio
 import json
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -11,56 +12,34 @@ from pydantic import BaseModel
 import os
 
 import database
-import scheduler
 from websocket_manager import manager
 from charmap import blank_matrix, text_to_matrix
 from config import settings
 
-# --- State ---
-_display_state: dict = {
-    "matrix": [],
-    "rows": settings.default_rows,
-    "cols": settings.default_cols,
-    "mode": "clock",
-    "mode_idx": 0,
-}
+# ── Per-screen runtime state ──────────────────────────────────────────────────
 
-_active_modes: list[str] = ["clock"]
-_rotation_interval: int = 30
+class ScreenState:
+    def __init__(self, screen_id: str, name: str, rows: int, cols: int):
+        self.screen_id = screen_id
+        self.name = name
+        self.rows = rows
+        self.cols = cols
+        self.matrix: list[list[int]] = blank_matrix(rows, cols)
+        self.mode: str = "clock"
+        self.mode_idx: int = 0
+        self.rotation_task: asyncio.Task | None = None
 
 
-# --- Content refresh ---
-async def refresh_display():
-    """Called by scheduler to advance to next mode and update matrix."""
-    global _display_state, _active_modes, _rotation_interval
+_screens: dict[str, ScreenState] = {}
 
-    db_settings = await database.get_settings()
-    rows = int(db_settings.get("rows", settings.default_rows))
-    cols = int(db_settings.get("cols", settings.default_cols))
 
-    modes = await database.get_modes()
-    enabled = [m for m in modes if m["enabled"]]
-    if not enabled:
-        return
+def get_screen_state(screen_id: str) -> ScreenState:
+    if screen_id not in _screens:
+        raise HTTPException(404, f"Screen '{screen_id}' not found")
+    return _screens[screen_id]
 
-    _display_state["mode_idx"] = (_display_state["mode_idx"] + 1) % len(enabled)
-    current_mode = enabled[_display_state["mode_idx"]]
-    mode_name = current_mode["mode"]
-    _display_state["mode"] = mode_name
 
-    matrix = await _render_mode(mode_name, rows, cols, db_settings)
-    _display_state["matrix"] = matrix
-    _display_state["rows"] = rows
-    _display_state["cols"] = cols
-
-    await manager.broadcast({
-        "type": "display_update",
-        "matrix": matrix,
-        "rows": rows,
-        "cols": cols,
-        "mode": mode_name,
-    })
-
+# ── Mode rendering ────────────────────────────────────────────────────────────
 
 async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict) -> list:
     from services.clock import get_clock_matrix
@@ -77,7 +56,6 @@ async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict) -> li
             show_date=db_settings.get("show_date", "true") == "true",
             timezone=db_settings.get("timezone", "UTC"),
         )
-
     elif mode == "weather":
         return await get_weather_matrix(
             rows, cols,
@@ -85,118 +63,177 @@ async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict) -> li
             location=db_settings.get("weather_location", ""),
             units=db_settings.get("weather_units", "imperial"),
         )
-
     elif mode == "news":
         cats = json.loads(db_settings.get("news_categories", '["general"]'))
         srcs = json.loads(db_settings.get("news_sources", "[]"))
         return await get_news_matrix(
             rows, cols,
             api_key=db_settings.get("news_api_key", ""),
-            categories=cats,
-            sources=srcs,
+            categories=cats, sources=srcs,
         )
-
     elif mode == "quotes":
         return await get_quote_matrix(rows, cols)
-
     elif mode == "calendar":
         return await get_calendar_matrix(
             rows, cols,
             ical_url=db_settings.get("calendar_ical_url", ""),
             timezone=db_settings.get("timezone", "UTC"),
         )
-
     elif mode == "text":
-        messages = await database.get_text_messages()
-        return await get_text_matrix(rows, cols, messages)
+        from database import get_text_messages
+        # Need screen_id — caller should handle this
+        return blank_matrix(rows, cols)
 
     return blank_matrix(rows, cols)
 
 
-async def tick_clock():
-    """Update clock display every second without advancing mode."""
-    db_settings = await database.get_settings()
-    mode = _display_state.get("mode", "clock")
-    if mode != "clock":
+async def advance_screen_mode(screen_id: str):
+    """Advance a screen to its next enabled mode and push to WebSocket clients."""
+    if screen_id not in _screens:
         return
 
-    rows = int(db_settings.get("rows", settings.default_rows))
-    cols = int(db_settings.get("cols", settings.default_cols))
-    matrix = await _render_mode("clock", rows, cols, db_settings)
-    _display_state["matrix"] = matrix
+    state = _screens[screen_id]
+    db_settings = await database.get_settings()
+    modes = await database.get_modes(screen_id)
+    enabled = [m for m in modes if m["enabled"]]
+    if not enabled:
+        return
 
-    await manager.broadcast({
+    state.mode_idx = (state.mode_idx + 1) % len(enabled)
+    mode_name = enabled[state.mode_idx]["mode"]
+    state.mode = mode_name
+
+    if mode_name == "text":
+        messages = await database.get_text_messages(screen_id)
+        from services.text_svc import get_text_matrix
+        matrix = await get_text_matrix(state.rows, state.cols, messages)
+    else:
+        matrix = await _render_mode(mode_name, state.rows, state.cols, db_settings)
+
+    state.matrix = matrix
+    await _broadcast_screen(state)
+
+
+async def _broadcast_screen(state: ScreenState):
+    await manager.broadcast(state.screen_id, {
         "type": "display_update",
-        "matrix": matrix,
-        "rows": rows,
-        "cols": cols,
-        "mode": "clock",
+        "matrix": state.matrix,
+        "rows": state.rows,
+        "cols": state.cols,
+        "mode": state.mode,
+        "screen_id": state.screen_id,
     })
 
 
-# --- Lifespan ---
+async def _rotation_loop(screen_id: str):
+    """Per-screen rotation loop using asyncio.sleep."""
+    try:
+        while True:
+            db_settings = await database.get_settings()
+            interval = int(db_settings.get("rotation_interval", 30))
+            await asyncio.sleep(interval)
+            await advance_screen_mode(screen_id)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _clock_tick_loop():
+    """Global 1-second clock updater: pushes clock matrix to all screens showing clock mode."""
+    try:
+        while True:
+            await asyncio.sleep(1)
+            db_settings = await database.get_settings()
+            for sid, state in list(_screens.items()):
+                if state.mode == "clock":
+                    from services.clock import get_clock_matrix
+                    matrix = get_clock_matrix(
+                        state.rows, state.cols,
+                        fmt=db_settings.get("clock_format", "12h"),
+                        show_date=db_settings.get("show_date", "true") == "true",
+                        timezone=db_settings.get("timezone", "UTC"),
+                    )
+                    state.matrix = matrix
+                    await _broadcast_screen(state)
+    except asyncio.CancelledError:
+        pass
+
+
+def _start_screen_rotation(screen_id: str):
+    task = asyncio.create_task(_rotation_loop(screen_id))
+    _screens[screen_id].rotation_task = task
+    return task
+
+
+def _stop_screen_rotation(screen_id: str):
+    state = _screens.get(screen_id)
+    if state and state.rotation_task:
+        state.rotation_task.cancel()
+        state.rotation_task = None
+
+
+def _restart_all_rotations():
+    for sid in list(_screens.keys()):
+        _stop_screen_rotation(sid)
+        _start_screen_rotation(sid)
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+_clock_task: asyncio.Task | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await database.init_db()
+    global _clock_task
 
+    await database.init_db()
     db_settings = await database.get_settings()
-    rows = int(db_settings.get("rows", settings.default_rows))
-    cols = int(db_settings.get("cols", settings.default_cols))
+    screens = await database.get_screens()
 
     from services.clock import get_clock_matrix
-    _display_state["matrix"] = get_clock_matrix(
-        rows, cols,
-        fmt=db_settings.get("clock_format", "12h"),
-        show_date=db_settings.get("show_date", "true") == "true",
-        timezone=db_settings.get("timezone", "UTC"),
-    )
-    _display_state["rows"] = rows
-    _display_state["cols"] = cols
 
-    interval = int(db_settings.get("rotation_interval", 30))
-    scheduler.start_scheduler()
-    scheduler.schedule_rotation(interval, refresh_display)
+    for screen in screens:
+        sid = screen["id"]
+        state = ScreenState(sid, screen["name"], screen["rows"], screen["cols"])
+        state.matrix = get_clock_matrix(
+            screen["rows"], screen["cols"],
+            fmt=db_settings.get("clock_format", "12h"),
+            show_date=db_settings.get("show_date", "true") == "true",
+            timezone=db_settings.get("timezone", "UTC"),
+        )
+        _screens[sid] = state
 
-    # Clock second ticker
-    scheduler._scheduler.add_job(
-        tick_clock,
-        trigger="interval",
-        seconds=1,
-        id="clock_tick",
-        replace_existing=True,
-    )
+    # Start rotation loops
+    for sid in _screens:
+        _start_screen_rotation(sid)
+
+    # Start global clock tick
+    _clock_task = asyncio.create_task(_clock_tick_loop())
 
     yield
-    scheduler.stop_scheduler()
+
+    # Cleanup
+    _clock_task.cancel()
+    for sid in list(_screens.keys()):
+        _stop_screen_rotation(sid)
 
 
-# --- App ---
+# ── App ───────────────────────────────────────────────────────────────────────
+
 app = FastAPI(title="FlipperBoards", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-# --- Pydantic models ---
+# ── Pydantic models ───────────────────────────────────────────────────────────
+
 class DisplayContent(BaseModel):
     text: str
-    rows: Optional[int] = None
-    cols: Optional[int] = None
-
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
 
-
 class SettingsUpdate(BaseModel):
-    rows: Optional[int] = None
-    cols: Optional[int] = None
     rotation_interval: Optional[int] = None
-    font: Optional[str] = None
     tile_color: Optional[str] = None
     bg_color: Optional[str] = None
     tile_bg_color: Optional[str] = None
@@ -211,7 +248,21 @@ class SettingsUpdate(BaseModel):
     news_sources: Optional[list[str]] = None
     calendar_ical_url: Optional[str] = None
     sound_enabled: Optional[bool] = None
+    divider_width: Optional[int] = None
+    divider_color: Optional[str] = None
+    physical_mode: Optional[bool] = None
+    sound_enabled: Optional[bool] = None
 
+class ScreenCreate(BaseModel):
+    id: str
+    name: str
+    rows: int = 6
+    cols: int = 22
+
+class ScreenUpdate(BaseModel):
+    name: str
+    rows: int
+    cols: int
 
 class ModeUpdate(BaseModel):
     mode: str
@@ -219,88 +270,152 @@ class ModeUpdate(BaseModel):
     sort_order: int
     config: Optional[dict] = {}
 
-
 class TextMessage(BaseModel):
     text: str
     duration: int = 30
 
 
-# --- API Routes ---
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _valid_screen_id(sid: str) -> bool:
+    return bool(re.match(r'^[a-z0-9_-]{1,64}$', sid))
+
+
+# ── Screen management ─────────────────────────────────────────────────────────
+
+@app.get("/api/screens")
+async def list_screens():
+    screens = await database.get_screens()
+    result = []
+    for s in screens:
+        state = _screens.get(s["id"])
+        result.append({
+            **s,
+            "mode": state.mode if state else "unknown",
+            "online": state is not None,
+        })
+    return result
+
+
+@app.post("/api/screens", status_code=201)
+async def create_screen(body: ScreenCreate):
+    if not _valid_screen_id(body.id):
+        raise HTTPException(400, "Screen ID must be lowercase alphanumeric, hyphens, underscores, max 64 chars")
+    if body.id in _screens:
+        raise HTTPException(409, f"Screen '{body.id}' already exists")
+
+    await database.create_screen(body.id, body.name, body.rows, body.cols)
+
+    db_settings = await database.get_settings()
+    from services.clock import get_clock_matrix
+    state = ScreenState(body.id, body.name, body.rows, body.cols)
+    state.matrix = get_clock_matrix(body.rows, body.cols,
+        fmt=db_settings.get("clock_format", "12h"),
+        show_date=db_settings.get("show_date", "true") == "true",
+        timezone=db_settings.get("timezone", "UTC"),
+    )
+    _screens[body.id] = state
+    _start_screen_rotation(body.id)
+
+    await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
+    return {"status": "created", "id": body.id}
+
+
+@app.put("/api/screens/{screen_id}")
+async def update_screen(screen_id: str, body: ScreenUpdate):
+    if screen_id not in _screens:
+        raise HTTPException(404, f"Screen '{screen_id}' not found")
+
+    await database.update_screen(screen_id, body.name, body.rows, body.cols)
+    state = _screens[screen_id]
+    state.name = body.name
+    if state.rows != body.rows or state.cols != body.cols:
+        state.rows = body.rows
+        state.cols = body.cols
+        state.matrix = blank_matrix(body.rows, body.cols)
+
+    await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
+    return {"status": "updated"}
+
+
+@app.delete("/api/screens/{screen_id}")
+async def delete_screen(screen_id: str):
+    if screen_id == "main":
+        raise HTTPException(400, "Cannot delete the main screen")
+    if screen_id not in _screens:
+        raise HTTPException(404)
+    _stop_screen_rotation(screen_id)
+    del _screens[screen_id]
+    await database.delete_screen(screen_id)
+    await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
+    return {"status": "deleted"}
+
+
+async def _screens_payload():
+    screens = await database.get_screens()
+    return [
+        {**s, "mode": _screens[s["id"]].mode if s["id"] in _screens else "unknown",
+         "online": s["id"] in _screens}
+        for s in screens
+    ]
+
+
+# ── Display control ───────────────────────────────────────────────────────────
 
 @app.get("/api/state")
-async def get_state():
-    return _display_state
+async def get_state(screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    return {
+        "screen_id": state.screen_id,
+        "name": state.name,
+        "matrix": state.matrix,
+        "rows": state.rows,
+        "cols": state.cols,
+        "mode": state.mode,
+    }
 
 
 @app.post("/api/display/text")
-async def push_text(content: DisplayContent):
-    db_settings = await database.get_settings()
-    rows = content.rows or int(db_settings.get("rows", settings.default_rows))
-    cols = content.cols or int(db_settings.get("cols", settings.default_cols))
-
-    matrix = text_to_matrix(content.text, rows, cols)
-    _display_state["matrix"] = matrix
-    _display_state["rows"] = rows
-    _display_state["cols"] = cols
-    _display_state["mode"] = "text_push"
-
-    await manager.broadcast({
-        "type": "display_update",
-        "matrix": matrix,
-        "rows": rows,
-        "cols": cols,
-        "mode": "text_push",
-    })
-    return {"status": "ok", "matrix": matrix}
+async def push_text(content: DisplayContent, screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    matrix = text_to_matrix(content.text, state.rows, state.cols)
+    state.matrix = matrix
+    state.mode = "text_push"
+    await _broadcast_screen(state)
+    return {"status": "ok", "screen": screen}
 
 
 @app.post("/api/display/matrix")
-async def push_matrix(content: MatrixContent):
-    matrix = content.matrix
-    if not matrix:
+async def push_matrix(content: MatrixContent, screen: str = Query(default="main")):
+    if not content.matrix:
         raise HTTPException(400, "Empty matrix")
-
-    rows = len(matrix)
-    cols = len(matrix[0]) if matrix else 0
-    _display_state["matrix"] = matrix
-    _display_state["rows"] = rows
-    _display_state["cols"] = cols
-    _display_state["mode"] = "matrix_push"
-
-    await manager.broadcast({
-        "type": "display_update",
-        "matrix": matrix,
-        "rows": rows,
-        "cols": cols,
-        "mode": "matrix_push",
-    })
-    return {"status": "ok"}
+    state = get_screen_state(screen)
+    state.matrix = content.matrix
+    state.rows = len(content.matrix)
+    state.cols = len(content.matrix[0]) if content.matrix else 0
+    state.mode = "matrix_push"
+    await _broadcast_screen(state)
+    return {"status": "ok", "screen": screen}
 
 
 @app.post("/api/display/blank")
-async def blank_display():
-    db_settings = await database.get_settings()
-    rows = int(db_settings.get("rows", settings.default_rows))
-    cols = int(db_settings.get("cols", settings.default_cols))
-    matrix = blank_matrix(rows, cols)
-    _display_state["matrix"] = matrix
-    _display_state["mode"] = "blank"
-
-    await manager.broadcast({
-        "type": "display_update",
-        "matrix": matrix,
-        "rows": rows,
-        "cols": cols,
-        "mode": "blank",
-    })
+async def blank_display(screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    state.matrix = blank_matrix(state.rows, state.cols)
+    state.mode = "blank"
+    await _broadcast_screen(state)
     return {"status": "ok"}
 
 
 @app.post("/api/display/next")
-async def next_mode():
-    await refresh_display()
-    return {"status": "ok", "mode": _display_state["mode"]}
+async def next_mode(screen: str = Query(default="main")):
+    if screen not in _screens:
+        raise HTTPException(404)
+    await advance_screen_mode(screen)
+    return {"status": "ok", "mode": _screens[screen].mode}
 
+
+# ── Global settings ───────────────────────────────────────────────────────────
 
 @app.get("/api/settings")
 async def get_settings():
@@ -318,36 +433,38 @@ async def update_settings(body: SettingsUpdate):
         else:
             await database.update_setting(key, str(value))
 
-    # Reschedule if interval changed
     if "rotation_interval" in updates:
-        scheduler.schedule_rotation(int(updates["rotation_interval"]), refresh_display)
+        _restart_all_rotations()
 
-    # Broadcast settings change
     new_settings = await database.get_settings()
-    await manager.broadcast({"type": "settings_update", "settings": new_settings})
+    await manager.broadcast_all({"type": "settings_update", "settings": new_settings})
     return new_settings
 
 
+# ── Per-screen modes ──────────────────────────────────────────────────────────
+
 @app.get("/api/modes")
-async def get_modes():
-    return await database.get_modes()
+async def get_modes(screen: str = Query(default="main")):
+    return await database.get_modes(screen)
 
 
 @app.put("/api/modes/{mode}")
-async def update_mode(mode: str, body: ModeUpdate):
-    await database.update_mode(mode, body.enabled, body.sort_order, body.config or {})
-    await manager.broadcast({"type": "modes_update", "modes": await database.get_modes()})
+async def update_mode(mode: str, body: ModeUpdate, screen: str = Query(default="main")):
+    await database.update_mode(screen, mode, body.enabled, body.sort_order, body.config or {})
+    await manager.broadcast(screen, {"type": "modes_update", "modes": await database.get_modes(screen)})
     return {"status": "ok"}
 
 
+# ── Per-screen text messages ──────────────────────────────────────────────────
+
 @app.get("/api/messages")
-async def get_messages():
-    return await database.get_text_messages()
+async def get_messages(screen: str = Query(default="main")):
+    return await database.get_text_messages(screen)
 
 
 @app.post("/api/messages")
-async def add_message(msg: TextMessage):
-    msg_id = await database.add_text_message(msg.text, msg.duration)
+async def add_message(msg: TextMessage, screen: str = Query(default="main")):
+    msg_id = await database.add_text_message(screen, msg.text, msg.duration)
     return {"id": msg_id, "text": msg.text, "duration": msg.duration}
 
 
@@ -357,31 +474,48 @@ async def delete_message(msg_id: int):
     return {"status": "ok"}
 
 
-# --- WebSocket ---
+# ── WebSocket (per-screen) ────────────────────────────────────────────────────
+
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await manager.connect(ws)
-    # Send current state on connect
-    await ws.send_text(json.dumps({
-        "type": "display_update",
-        "matrix": _display_state["matrix"],
-        "rows": _display_state["rows"],
-        "cols": _display_state["cols"],
-        "mode": _display_state["mode"],
-    }))
-    settings_data = await database.get_settings()
-    await ws.send_text(json.dumps({"type": "settings_update", "settings": settings_data}))
-    modes_data = await database.get_modes()
-    await ws.send_text(json.dumps({"type": "modes_update", "modes": modes_data}))
+async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main")):
+    await manager.connect(ws, screen)
+
+    # Bootstrap the new client
+    state = _screens.get(screen)
+    db_settings = await database.get_settings()
+    screens_list = await _screens_payload()
+
+    initial_msgs = [
+        {"type": "settings_update", "settings": db_settings},
+        {"type": "screens_update", "screens": screens_list},
+        {"type": "modes_update", "modes": await database.get_modes(screen)},
+    ]
+    if state:
+        initial_msgs.insert(0, {
+            "type": "display_update",
+            "matrix": state.matrix,
+            "rows": state.rows,
+            "cols": state.cols,
+            "mode": state.mode,
+            "screen_id": screen,
+        })
+
+    import json as _json
+    for msg in initial_msgs:
+        try:
+            await ws.send_text(_json.dumps(msg))
+        except Exception:
+            break
 
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(ws)
+        manager.disconnect(ws, screen)
 
 
-# --- Serve frontend ---
+# ── Serve frontend ────────────────────────────────────────────────────────────
+
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(FRONTEND_DIST):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")

@@ -1,7 +1,7 @@
 import React, { useMemo, useRef } from 'react'
 import FlapTile from './FlapTile'
 
-const STAGGER_MS_PER_COL = 30  // delay increment per column position
+const STAGGER_MS_PER_COL = 30
 
 export default function SplitFlapDisplay({
   matrix = [],
@@ -12,10 +12,12 @@ export default function SplitFlapDisplay({
   bgColor = '#1a1a1a',
   tileSize = 'md',
   soundEnabled = true,
+  dividerWidth = 4,    // gap between tiles in px — represents dowel rods
+  dividerColor = '#111111',
+  physicalMode = false, // adds depth shadows for physical frame look
 }) {
   const prevMatrixRef = useRef([])
 
-  // Ensure matrix is always rows×cols
   const normalizedMatrix = useMemo(() => {
     const result = []
     for (let r = 0; r < rows; r++) {
@@ -29,7 +31,6 @@ export default function SplitFlapDisplay({
     return result
   }, [matrix, rows, cols])
 
-  // Build stagger delay map: tiles that changed get a delay based on column
   const staggerMap = useMemo(() => {
     const map = []
     for (let r = 0; r < rows; r++) {
@@ -37,8 +38,7 @@ export default function SplitFlapDisplay({
       for (let c = 0; c < cols; c++) {
         const prevCode = prevMatrixRef.current?.[r]?.[c] ?? -1
         const newCode = normalizedMatrix[r]?.[c] ?? 0
-        const changed = prevCode !== newCode
-        row.push(changed ? c * STAGGER_MS_PER_COL : 0)
+        row.push(prevCode !== newCode ? c * STAGGER_MS_PER_COL : 0)
       }
       map.push(row)
     }
@@ -47,31 +47,50 @@ export default function SplitFlapDisplay({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedMatrix])
 
+  // Physical mode tile shadow — makes each tile look inset/3D
+  const tileShadow = physicalMode
+    ? 'inset 0 1px 2px rgba(0,0,0,0.7), inset 0 -1px 1px rgba(255,255,255,0.04)'
+    : undefined
+
+  const colGap = `${dividerWidth}px`
+  const rowGap = `${dividerWidth}px`
+
   return (
     <div
-      className="inline-flex flex-col items-center rounded-lg p-4 shadow-2xl"
+      className="inline-flex flex-col items-center rounded-lg shadow-2xl"
       style={{
         background: bgColor,
-        boxShadow: `0 0 40px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5)`,
+        padding: physicalMode ? `${dividerWidth * 3}px` : '16px',
+        boxShadow: physicalMode
+          ? `0 8px 32px rgba(0,0,0,0.9), inset 0 0 0 2px rgba(255,255,255,0.04)`
+          : `0 0 40px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5)`,
       }}
     >
-      {/* Board frame top bar */}
-      <div className="w-full flex items-center justify-between mb-2 px-2">
-        <div className="flex gap-1">
-          <div className="w-2 h-2 rounded-full bg-red-600 opacity-70" />
-          <div className="w-2 h-2 rounded-full bg-yellow-500 opacity-70" />
-          <div className="w-2 h-2 rounded-full bg-green-500 opacity-70" />
+      {/* Header bar */}
+      {!physicalMode && (
+        <div className="w-full flex items-center justify-between mb-2 px-2">
+          <div className="flex gap-1">
+            <div className="w-2 h-2 rounded-full bg-red-600 opacity-70" />
+            <div className="w-2 h-2 rounded-full bg-yellow-500 opacity-70" />
+            <div className="w-2 h-2 rounded-full bg-green-500 opacity-70" />
+          </div>
+          <div className="text-xs text-gray-600 font-mono tracking-widest uppercase">FlipperBoards</div>
+          <div className="w-2 h-2 rounded-full bg-blue-500 opacity-40 animate-pulse" />
         </div>
-        <div className="text-xs text-gray-600 font-mono tracking-widest uppercase">
-          FlipperBoards
-        </div>
-        <div className="w-2 h-2 rounded-full bg-blue-500 opacity-40 animate-pulse" />
-      </div>
+      )}
 
-      {/* Tile grid */}
-      <div className="flex flex-col" style={{ gap: '3px' }}>
+      {/* Tile grid — background color fills the divider gaps */}
+      <div
+        className="flex flex-col"
+        style={{
+          gap: rowGap,
+          background: dividerColor,
+          borderRadius: physicalMode ? '2px' : '4px',
+          padding: physicalMode ? `${dividerWidth}px` : '0',
+        }}
+      >
         {normalizedMatrix.map((row, r) => (
-          <div key={r} className="flex" style={{ gap: '2px' }}>
+          <div key={r} className="flex" style={{ gap: colGap }}>
             {row.map((code, c) => (
               <FlapTile
                 key={`${r}-${c}`}
@@ -81,16 +100,18 @@ export default function SplitFlapDisplay({
                 size={tileSize}
                 delay={staggerMap[r]?.[c] ?? 0}
                 soundEnabled={soundEnabled}
+                extraShadow={tileShadow}
               />
             ))}
           </div>
         ))}
       </div>
 
-      {/* Board frame bottom bar */}
-      <div className="w-full mt-2 flex items-center justify-center">
-        <div className="h-px bg-gray-700 w-full opacity-50" />
-      </div>
+      {!physicalMode && (
+        <div className="w-full mt-2">
+          <div className="h-px bg-gray-700 w-full opacity-50" />
+        </div>
+      )}
     </div>
   )
 }
