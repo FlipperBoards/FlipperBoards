@@ -14,7 +14,11 @@ _loaded: list[FlipperPlugin] = []
 
 
 def load(plugin_names: list[str]) -> list[FlipperPlugin]:
-    """Import and instantiate plugins by name from the plugins package."""
+    """Import and instantiate plugins by name from the plugins package.
+
+    Sets _loaded immediately so on_db_init hooks work during database.init_db().
+    """
+    global _loaded
     plugins: list[FlipperPlugin] = []
     for name in plugin_names:
         try:
@@ -30,13 +34,17 @@ def load(plugin_names: list[str]) -> list[FlipperPlugin]:
         plugins.append(plugin)
         logger.info("Loaded plugin: %s v%s (required=%s)", plugin.name, plugin.version, plugin.required)
 
+    _loaded = plugins
     return plugins
 
 
 async def startup(app: "FastAPI", plugins: list[FlipperPlugin]) -> None:
-    global _loaded
-    _loaded = plugins
+    """Register each plugin's modes then call on_startup."""
+    import mode_registry
     for plugin in plugins:
+        for mode in plugin.modes:
+            mode_registry.register(mode)
+            logger.info("Registered mode '%s' from plugin '%s'", mode.id, plugin.name)
         await plugin.on_startup(app)
 
 

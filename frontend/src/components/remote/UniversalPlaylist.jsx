@@ -1,39 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 
-const MODES = [
-  { id: 'clock',    label: 'Clock',          icon: '🕐' },
-  { id: 'weather',  label: 'Weather',        icon: '🌤' },
-  { id: 'news',     label: 'News',           icon: '📰' },
-  { id: 'quotes',   label: 'Quotes',         icon: '💬' },
-  { id: 'calendar', label: 'Calendar',       icon: '📅' },
-  { id: 'text',     label: 'Text Messages',  icon: '✏️' },
-]
-
-function itemIcon(item) {
-  if (item.type === 'text') return '📝'
-  if (item.type === 'photo') return '🖼️'
-  if (item.type === 'mode') {
-    return MODES.find(m => m.id === item.content?.mode)?.icon ?? '⬡'
-  }
-  return '⬡'
-}
-
-function itemLabel(item) {
-  if (item.type === 'text') {
-    const t = item.content?.text ?? ''
-    return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}"`
-  }
-  if (item.type === 'photo') {
-    return item.content?.url?.split('/').pop() ?? 'Photo'
-  }
-  if (item.type === 'mode') {
-    return MODES.find(m => m.id === item.content?.mode)?.label ?? item.content?.mode ?? 'Mode'
-  }
-  return item.type
-}
-
 export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [items, setItems] = useState([])
+  const [availableModes, setAvailableModes] = useState([])
   const [showAdd, setShowAdd] = useState(false)
   const [addType, setAddType] = useState('mode')
   const [addMode, setAddMode] = useState('clock')
@@ -45,7 +14,38 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [editingDuration, setEditingDuration] = useState(null) // item id
   const photoRef = useRef(null)
 
+  const modeById = Object.fromEntries(availableModes.map(m => [m.id, m]))
+
+  const itemIcon = (item) => {
+    if (item.type === 'text') return '📝'
+    if (item.type === 'photo') return '🖼️'
+    if (item.type === 'mode') return modeById[item.content?.mode]?.icon ?? '⬡'
+    return '⬡'
+  }
+
+  const itemLabel = (item) => {
+    if (item.type === 'text') {
+      const t = item.content?.text ?? ''
+      return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}"`
+    }
+    if (item.type === 'photo') return item.content?.url?.split('/').pop() ?? 'Photo'
+    if (item.type === 'mode') return modeById[item.content?.mode]?.label ?? item.content?.mode ?? 'Mode'
+    return item.type
+  }
+
   const qs = `?screen=${encodeURIComponent(screenId)}`
+
+  useEffect(() => {
+    fetch('/api/modes/available')
+      .then(r => r.json())
+      .then(list => {
+        setAvailableModes(list)
+        if (list.length > 0 && !list.find(m => m.id === addMode)) {
+          setAddMode(list[0].id)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/playlist${qs}`)
@@ -281,7 +281,7 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           {/* Type-specific content */}
           {addType === 'mode' && (
             <div className="grid grid-cols-2 gap-1.5">
-              {MODES.map(m => (
+              {availableModes.map(m => (
                 <button
                   key={m.id}
                   onClick={() => setAddMode(m.id)}
