@@ -41,10 +41,12 @@ async def init_db():
             )
         """)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS playlist_images (
+            CREATE TABLE IF NOT EXISTS playlist_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 screen_id TEXT NOT NULL,
-                url TEXT NOT NULL,
+                type TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '{}',
+                duration INTEGER NOT NULL DEFAULT 30,
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
         """)
@@ -79,21 +81,18 @@ async def _seed_defaults(db: aiosqlite.Connection):
             (key, value)
         )
 
-    # Seed the default "main" screen
     await db.execute(
         "INSERT OR IGNORE INTO screens (id, name, rows, cols) VALUES (?, ?, ?, ?)",
         ("main", "Main Display", 6, 22)
     )
 
-    # Seed default mode configs for the main screen
     mode_defaults = [
-        ("main", "clock",          "{}", 1, 0),
-        ("main", "text",           "{}", 0, 1),
-        ("main", "weather",        "{}", 0, 2),
-        ("main", "news",           "{}", 0, 3),
-        ("main", "quotes",         "{}", 0, 4),
-        ("main", "calendar",       "{}", 0, 5),
-        ("main", "photo_playlist", "{}", 0, 6),
+        ("main", "clock",    "{}", 1, 0),
+        ("main", "text",     "{}", 0, 1),
+        ("main", "weather",  "{}", 0, 2),
+        ("main", "news",     "{}", 0, 3),
+        ("main", "quotes",   "{}", 0, 4),
+        ("main", "calendar", "{}", 0, 5),
     ]
     for screen_id, mode, config, enabled, order in mode_defaults:
         await db.execute(
@@ -152,7 +151,6 @@ async def create_screen(screen_id: str, name: str, rows: int = 6, cols: int = 22
         mode_defaults = [
             ("clock", 1, 0), ("text", 0, 1), ("weather", 0, 2),
             ("news", 0, 3), ("quotes", 0, 4), ("calendar", 0, 5),
-            ("photo_playlist", 0, 6),
         ]
         for mode, enabled, order in mode_defaults:
             await db.execute(
@@ -178,7 +176,7 @@ async def delete_screen(screen_id: str):
         await db.execute("DELETE FROM screens WHERE id=?", (screen_id,))
         await db.execute("DELETE FROM screen_modes WHERE screen_id=?", (screen_id,))
         await db.execute("DELETE FROM text_messages WHERE screen_id=?", (screen_id,))
-        await db.execute("DELETE FROM playlist_images WHERE screen_id=?", (screen_id,))
+        await db.execute("DELETE FROM playlist_items WHERE screen_id=?", (screen_id,))
         await db.commit()
 
 
@@ -193,7 +191,6 @@ async def get_modes(screen_id: str = "main") -> list[dict]:
         ) as cur:
             rows = await cur.fetchall()
     if not rows:
-        # fallback: return default mode list (disabled)
         return [
             {"mode": m, "config": {}, "enabled": False, "sort_order": i}
             for i, m in enumerate(["clock", "text", "weather", "news", "quotes", "calendar"])
@@ -245,38 +242,70 @@ async def delete_text_message(msg_id: int):
         await db.commit()
 
 
-# ── Per-screen image playlist ─────────────────────────────────────────────────
+# ── Universal content playlist ────────────────────────────────────────────────
 
-async def get_playlist(screen_id: str) -> list[dict]:
+async def get_playlist_items(screen_id: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, url, sort_order FROM playlist_images WHERE screen_id=? ORDER BY sort_order, id",
+            "SELECT id, type, content, duration, sort_order FROM playlist_items "
+            "WHERE screen_id=? ORDER BY sort_order, id",
             (screen_id,)
         ) as cur:
             rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+    return [
+        {
+            "id": row["id"],
+            "type": row["type"],
+            "content": json.loads(row["content"]),
+            "duration": row["duration"],
+            "sort_order": row["sort_order"],
+        }
+        for row in rows
+    ]
 
 
-async def add_playlist_image(screen_id: str, url: str) -> int:
+async def add_playlist_item(
+    screen_id: str, item_type: str, content: dict, duration: int
+) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "INSERT INTO playlist_images (screen_id, url, sort_order) "
-            "VALUES (?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_images WHERE screen_id=?))",
-            (screen_id, url, screen_id)
+            "INSERT INTO playlist_items (screen_id, type, content, duration, sort_order) "
+            "VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_items WHERE screen_id=?))",
+            (screen_id, item_type, json.dumps(content), duration, screen_id)
         ) as cur:
             row_id = cur.lastrowid
         await db.commit()
     return row_id
 
 
-async def remove_playlist_image(image_id: int):
+async def update_playlist_item(item_id: int, item_type: str, content: dict, duration: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM playlist_images WHERE id=?", (image_id,))
+        await db.execute(
+            "UPDATE playlist_items SET type=?, content=?, duration=? WHERE id=?",
+            (item_type, json.dumps(content), duration, item_id)
+        )
         await db.commit()
 
 
-async def clear_playlist(screen_id: str):
+async def remove_playlist_item(item_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM playlist_images WHERE screen_id=?", (screen_id,))
+        await db.execute("DELETE FROM playlist_items WHERE id=?", (item_id,))
+        await db.commit()
+
+
+async def clear_playlist_items(screen_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM playlist_items WHERE screen_id=?", (screen_id,))
+        await db.commit()
+
+
+async def reorder_playlist_items(screen_id: str, ordered_ids: list[int]):
+    """Set sort_order to match the given id sequence."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        for order, item_id in enumerate(ordered_ids):
+            await db.execute(
+                "UPDATE playlist_items SET sort_order=? WHERE id=? AND screen_id=?",
+                (order, item_id, screen_id)
+            )
         await db.commit()
