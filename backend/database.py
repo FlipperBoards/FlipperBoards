@@ -4,57 +4,198 @@ from config import settings
 
 DB_PATH = settings.db_path
 
+DEFAULT_ORG_ID = 1
+
+
+# ── Schema init & migration ───────────────────────────────────────────────────
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS display_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS screens (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                rows INTEGER NOT NULL DEFAULT 6,
-                cols INTEGER NOT NULL DEFAULT 22
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS screen_modes (
-                screen_id TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                config TEXT NOT NULL DEFAULT '{}',
-                enabled INTEGER NOT NULL DEFAULT 0,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (screen_id, mode)
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS text_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                screen_id TEXT NOT NULL DEFAULT 'main',
-                text TEXT NOT NULL,
-                duration INTEGER NOT NULL DEFAULT 30,
-                sort_order INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS playlist_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                screen_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                content TEXT NOT NULL DEFAULT '{}',
-                duration INTEGER NOT NULL DEFAULT 30,
-                sort_order INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+        await _create_tables(db)
+        await _migrate(db)
+        await _notify_plugins(db)
         await db.commit()
         await _seed_defaults(db)
 
 
+async def _create_tables(db: aiosqlite.Connection):
+    # ── Identity / auth tables (used in SaaS; present but unpopulated in self-hosted) ──
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS organizations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL,
+            slug        TEXT    NOT NULL UNIQUE,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT    NOT NULL UNIQUE,
+            name        TEXT    NOT NULL DEFAULT '',
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS org_members (
+            org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            user_id     INTEGER NOT NULL REFERENCES users(id)         ON DELETE CASCADE,
+            role        TEXT    NOT NULL DEFAULT 'member',
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (org_id, user_id)
+        )
+    """)
+
+    # ── Core display tables ───────────────────────────────────────────────────
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS display_settings (
+            org_id  INTEGER NOT NULL DEFAULT 1,
+            key     TEXT    NOT NULL,
+            value   TEXT    NOT NULL,
+            PRIMARY KEY (org_id, key)
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS screens (
+            id      TEXT    NOT NULL,
+            org_id  INTEGER NOT NULL DEFAULT 1,
+            name    TEXT    NOT NULL,
+            rows    INTEGER NOT NULL DEFAULT 6,
+            cols    INTEGER NOT NULL DEFAULT 22,
+            PRIMARY KEY (org_id, id)
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS screen_modes (
+            org_id      INTEGER NOT NULL DEFAULT 1,
+            screen_id   TEXT    NOT NULL,
+            mode        TEXT    NOT NULL,
+            config      TEXT    NOT NULL DEFAULT '{}',
+            enabled     INTEGER NOT NULL DEFAULT 0,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (org_id, screen_id, mode)
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS text_messages (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id      INTEGER NOT NULL DEFAULT 1,
+            screen_id   TEXT    NOT NULL DEFAULT 'main',
+            text        TEXT    NOT NULL,
+            duration    INTEGER NOT NULL DEFAULT 30,
+            sort_order  INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS playlist_items (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id      INTEGER NOT NULL DEFAULT 1,
+            screen_id   TEXT    NOT NULL,
+            type        TEXT    NOT NULL,
+            content     TEXT    NOT NULL DEFAULT '{}',
+            duration    INTEGER NOT NULL DEFAULT 30,
+            sort_order  INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+
+async def _migrate(db: aiosqlite.Connection):
+    """Add org_id to legacy tables that predate multi-tenant support."""
+
+    # display_settings: old schema had (key TEXT PRIMARY KEY, value TEXT).
+    # New schema needs (org_id, key) composite PK. Rebuild the table if needed.
+    async with db.execute("PRAGMA table_info(display_settings)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if "org_id" not in cols and cols:
+        await db.execute("ALTER TABLE display_settings RENAME TO _display_settings_legacy")
+        await db.execute("""
+            CREATE TABLE display_settings (
+                org_id  INTEGER NOT NULL DEFAULT 1,
+                key     TEXT    NOT NULL,
+                value   TEXT    NOT NULL,
+                PRIMARY KEY (org_id, key)
+            )
+        """)
+        await db.execute(
+            "INSERT OR IGNORE INTO display_settings (org_id, key, value) "
+            "SELECT 1, key, value FROM _display_settings_legacy"
+        )
+        await db.execute("DROP TABLE _display_settings_legacy")
+
+    # screens: old schema had id TEXT PRIMARY KEY with no org_id
+    async with db.execute("PRAGMA table_info(screens)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if "org_id" not in cols and cols:
+        # Rebuild — can't add a NOT NULL column without a default via ALTER in all SQLite versions
+        await db.execute("ALTER TABLE screens RENAME TO _screens_legacy")
+        await db.execute("""
+            CREATE TABLE screens (
+                id      TEXT    NOT NULL,
+                org_id  INTEGER NOT NULL DEFAULT 1,
+                name    TEXT    NOT NULL,
+                rows    INTEGER NOT NULL DEFAULT 6,
+                cols    INTEGER NOT NULL DEFAULT 22,
+                PRIMARY KEY (org_id, id)
+            )
+        """)
+        await db.execute(
+            "INSERT OR IGNORE INTO screens (id, org_id, name, rows, cols) "
+            "SELECT id, 1, name, rows, cols FROM _screens_legacy"
+        )
+        await db.execute("DROP TABLE _screens_legacy")
+
+    # screen_modes: old PK was (screen_id, mode)
+    async with db.execute("PRAGMA table_info(screen_modes)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if "org_id" not in cols and cols:
+        await db.execute("ALTER TABLE screen_modes RENAME TO _screen_modes_legacy")
+        await db.execute("""
+            CREATE TABLE screen_modes (
+                org_id      INTEGER NOT NULL DEFAULT 1,
+                screen_id   TEXT    NOT NULL,
+                mode        TEXT    NOT NULL,
+                config      TEXT    NOT NULL DEFAULT '{}',
+                enabled     INTEGER NOT NULL DEFAULT 0,
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (org_id, screen_id, mode)
+            )
+        """)
+        await db.execute(
+            "INSERT OR IGNORE INTO screen_modes (org_id, screen_id, mode, config, enabled, sort_order) "
+            "SELECT 1, screen_id, mode, config, enabled, sort_order FROM _screen_modes_legacy"
+        )
+        await db.execute("DROP TABLE _screen_modes_legacy")
+
+    # text_messages and playlist_items: simple column additions are safe
+    for table in ("text_messages", "playlist_items"):
+        async with db.execute(f"PRAGMA table_info({table})") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "org_id" not in cols and cols:
+            await db.execute(
+                f"ALTER TABLE {table} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1"
+            )
+
+
+async def _notify_plugins(db: aiosqlite.Connection):
+    import plugins as plugin_registry
+    await plugin_registry.db_init(db)
+
+
 async def _seed_defaults(db: aiosqlite.Connection):
+    # Default organization (self-hosted always uses org_id=1)
+    await db.execute(
+        "INSERT OR IGNORE INTO organizations (id, name, slug) VALUES (?, ?, ?)",
+        (1, "Default", "default")
+    )
+
     global_defaults = {
         "rotation_interval": "30",
         "tile_color": "#ffffff",
@@ -77,76 +218,93 @@ async def _seed_defaults(db: aiosqlite.Connection):
     }
     for key, value in global_defaults.items():
         await db.execute(
-            "INSERT OR IGNORE INTO display_settings (key, value) VALUES (?, ?)",
-            (key, value)
+            "INSERT OR IGNORE INTO display_settings (org_id, key, value) VALUES (?, ?, ?)",
+            (DEFAULT_ORG_ID, key, value)
         )
 
     await db.execute(
-        "INSERT OR IGNORE INTO screens (id, name, rows, cols) VALUES (?, ?, ?, ?)",
-        ("main", "Main Display", 6, 22)
+        "INSERT OR IGNORE INTO screens (id, org_id, name, rows, cols) VALUES (?, ?, ?, ?, ?)",
+        ("main", DEFAULT_ORG_ID, "Main Display", 6, 22)
     )
 
     mode_defaults = [
-        ("main", "clock",    "{}", 1, 0),
-        ("main", "text",     "{}", 0, 1),
-        ("main", "weather",  "{}", 0, 2),
-        ("main", "news",     "{}", 0, 3),
-        ("main", "quotes",   "{}", 0, 4),
-        ("main", "calendar", "{}", 0, 5),
+        ("clock", 1, 0), ("text", 0, 1), ("weather", 0, 2),
+        ("news", 0, 3), ("quotes", 0, 4), ("calendar", 0, 5),
     ]
-    for screen_id, mode, config, enabled, order in mode_defaults:
+    for mode, enabled, order in mode_defaults:
         await db.execute(
-            "INSERT OR IGNORE INTO screen_modes (screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?)",
-            (screen_id, mode, config, enabled, order)
+            "INSERT OR IGNORE INTO screen_modes "
+            "(org_id, screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?,?)",
+            (DEFAULT_ORG_ID, "main", mode, "{}", enabled, order)
         )
 
     await db.commit()
 
 
-# ── Global settings ──────────────────────────────────────────────────────────
+# ── Global settings ───────────────────────────────────────────────────────────
 
-async def get_settings() -> dict:
+async def get_settings(org_id: int = DEFAULT_ORG_ID) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT key, value FROM display_settings") as cur:
+        async with db.execute(
+            "SELECT key, value FROM display_settings WHERE org_id = ?", (org_id,)
+        ) as cur:
             rows = await cur.fetchall()
     return {row["key"]: row["value"] for row in rows}
 
 
-async def update_setting(key: str, value: str):
+async def update_setting(key: str, value: str, org_id: int = DEFAULT_ORG_ID):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO display_settings (key, value) VALUES (?, ?)",
-            (key, value)
+            "INSERT OR REPLACE INTO display_settings (org_id, key, value) VALUES (?, ?, ?)",
+            (org_id, key, value)
         )
         await db.commit()
 
 
-# ── Screens ───────────────────────────────────────────────────────────────────
+# ── Organizations ─────────────────────────────────────────────────────────────
 
-async def get_screens() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT id, name, rows, cols FROM screens ORDER BY id") as cur:
-            rows = await cur.fetchall()
-    return [dict(row) for row in rows]
-
-
-async def get_screen(screen_id: str) -> dict | None:
+async def get_organization(org_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, name, rows, cols FROM screens WHERE id = ?", (screen_id,)
+            "SELECT id, name, slug, created_at FROM organizations WHERE id = ?", (org_id,)
         ) as cur:
             row = await cur.fetchone()
     return dict(row) if row else None
 
 
-async def create_screen(screen_id: str, name: str, rows: int = 6, cols: int = 22):
+# ── Screens ───────────────────────────────────────────────────────────────────
+
+async def get_screens(org_id: int = DEFAULT_ORG_ID) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, name, rows, cols FROM screens WHERE org_id = ? ORDER BY id",
+            (org_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def get_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, name, rows, cols FROM screens WHERE id = ? AND org_id = ?",
+            (screen_id, org_id)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def create_screen(
+    screen_id: str, name: str, rows: int = 6, cols: int = 22, org_id: int = DEFAULT_ORG_ID
+):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO screens (id, name, rows, cols) VALUES (?, ?, ?, ?)",
-            (screen_id, name, rows, cols)
+            "INSERT OR IGNORE INTO screens (id, org_id, name, rows, cols) VALUES (?, ?, ?, ?, ?)",
+            (screen_id, org_id, name, rows, cols)
         )
         mode_defaults = [
             ("clock", 1, 0), ("text", 0, 1), ("weather", 0, 2),
@@ -154,40 +312,52 @@ async def create_screen(screen_id: str, name: str, rows: int = 6, cols: int = 22
         ]
         for mode, enabled, order in mode_defaults:
             await db.execute(
-                "INSERT OR IGNORE INTO screen_modes (screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?)",
-                (screen_id, mode, "{}", enabled, order)
+                "INSERT OR IGNORE INTO screen_modes "
+                "(org_id, screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?,?)",
+                (org_id, screen_id, mode, "{}", enabled, order)
             )
         await db.commit()
 
 
-async def update_screen(screen_id: str, name: str, rows: int, cols: int):
+async def update_screen(
+    screen_id: str, name: str, rows: int, cols: int, org_id: int = DEFAULT_ORG_ID
+):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "UPDATE screens SET name=?, rows=?, cols=? WHERE id=?",
-            (name, rows, cols, screen_id)
+            "UPDATE screens SET name=?, rows=?, cols=? WHERE id=? AND org_id=?",
+            (name, rows, cols, screen_id, org_id)
         )
         await db.commit()
 
 
-async def delete_screen(screen_id: str):
+async def delete_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID):
     if screen_id == "main":
         raise ValueError("Cannot delete the main screen")
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM screens WHERE id=?", (screen_id,))
-        await db.execute("DELETE FROM screen_modes WHERE screen_id=?", (screen_id,))
-        await db.execute("DELETE FROM text_messages WHERE screen_id=?", (screen_id,))
-        await db.execute("DELETE FROM playlist_items WHERE screen_id=?", (screen_id,))
+        await db.execute(
+            "DELETE FROM screens WHERE id=? AND org_id=?", (screen_id, org_id)
+        )
+        await db.execute(
+            "DELETE FROM screen_modes WHERE screen_id=? AND org_id=?", (screen_id, org_id)
+        )
+        await db.execute(
+            "DELETE FROM text_messages WHERE screen_id=? AND org_id=?", (screen_id, org_id)
+        )
+        await db.execute(
+            "DELETE FROM playlist_items WHERE screen_id=? AND org_id=?", (screen_id, org_id)
+        )
         await db.commit()
 
 
 # ── Per-screen modes ──────────────────────────────────────────────────────────
 
-async def get_modes(screen_id: str = "main") -> list[dict]:
+async def get_modes(screen_id: str = "main", org_id: int = DEFAULT_ORG_ID) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT mode, config, enabled, sort_order FROM screen_modes WHERE screen_id=? ORDER BY sort_order",
-            (screen_id,)
+            "SELECT mode, config, enabled, sort_order FROM screen_modes "
+            "WHERE screen_id=? AND org_id=? ORDER BY sort_order",
+            (screen_id, org_id)
         ) as cur:
             rows = await cur.fetchall()
     if not rows:
@@ -196,61 +366,79 @@ async def get_modes(screen_id: str = "main") -> list[dict]:
             for i, m in enumerate(["clock", "text", "weather", "news", "quotes", "calendar"])
         ]
     return [
-        {"mode": row["mode"], "config": json.loads(row["config"]),
-         "enabled": bool(row["enabled"]), "sort_order": row["sort_order"]}
+        {
+            "mode": row["mode"],
+            "config": json.loads(row["config"]),
+            "enabled": bool(row["enabled"]),
+            "sort_order": row["sort_order"],
+        }
         for row in rows
     ]
 
 
-async def update_mode(screen_id: str, mode: str, enabled: bool, sort_order: int, config: dict):
+async def update_mode(
+    screen_id: str, mode: str, enabled: bool, sort_order: int, config: dict,
+    org_id: int = DEFAULT_ORG_ID,
+):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO screen_modes (screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?)",
-            (screen_id, mode, json.dumps(config), int(enabled), sort_order)
+            "INSERT OR REPLACE INTO screen_modes "
+            "(org_id, screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?,?)",
+            (org_id, screen_id, mode, json.dumps(config), int(enabled), sort_order)
         )
         await db.commit()
 
 
 # ── Per-screen text messages ──────────────────────────────────────────────────
 
-async def get_text_messages(screen_id: str = "main") -> list[dict]:
+async def get_text_messages(
+    screen_id: str = "main", org_id: int = DEFAULT_ORG_ID
+) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, text, duration, sort_order FROM text_messages WHERE screen_id=? ORDER BY sort_order, id",
-            (screen_id,)
+            "SELECT id, text, duration, sort_order FROM text_messages "
+            "WHERE screen_id=? AND org_id=? ORDER BY sort_order, id",
+            (screen_id, org_id)
         ) as cur:
             rows = await cur.fetchall()
     return [dict(row) for row in rows]
 
 
-async def add_text_message(screen_id: str, text: str, duration: int = 30) -> int:
+async def add_text_message(
+    screen_id: str, text: str, duration: int = 30, org_id: int = DEFAULT_ORG_ID
+) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "INSERT INTO text_messages (screen_id, text, duration, sort_order) "
-            "VALUES (?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM text_messages WHERE screen_id=?))",
-            (screen_id, text, duration, screen_id)
+            "INSERT INTO text_messages (org_id, screen_id, text, duration, sort_order) "
+            "VALUES (?, ?, ?, ?, "
+            "(SELECT COALESCE(MAX(sort_order),0)+1 FROM text_messages WHERE screen_id=? AND org_id=?))",
+            (org_id, screen_id, text, duration, screen_id, org_id)
         ) as cur:
             row_id = cur.lastrowid
         await db.commit()
     return row_id
 
 
-async def delete_text_message(msg_id: int):
+async def delete_text_message(msg_id: int, org_id: int = DEFAULT_ORG_ID):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM text_messages WHERE id = ?", (msg_id,))
+        await db.execute(
+            "DELETE FROM text_messages WHERE id = ? AND org_id = ?", (msg_id, org_id)
+        )
         await db.commit()
 
 
 # ── Universal content playlist ────────────────────────────────────────────────
 
-async def get_playlist_items(screen_id: str) -> list[dict]:
+async def get_playlist_items(
+    screen_id: str, org_id: int = DEFAULT_ORG_ID
+) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, type, content, duration, sort_order FROM playlist_items "
-            "WHERE screen_id=? ORDER BY sort_order, id",
-            (screen_id,)
+            "WHERE screen_id=? AND org_id=? ORDER BY sort_order, id",
+            (screen_id, org_id)
         ) as cur:
             rows = await cur.fetchall()
     return [
@@ -266,46 +454,56 @@ async def get_playlist_items(screen_id: str) -> list[dict]:
 
 
 async def add_playlist_item(
-    screen_id: str, item_type: str, content: dict, duration: int
+    screen_id: str, item_type: str, content: dict, duration: int,
+    org_id: int = DEFAULT_ORG_ID,
 ) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "INSERT INTO playlist_items (screen_id, type, content, duration, sort_order) "
-            "VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_items WHERE screen_id=?))",
-            (screen_id, item_type, json.dumps(content), duration, screen_id)
+            "INSERT INTO playlist_items (org_id, screen_id, type, content, duration, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, "
+            "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_items WHERE screen_id=? AND org_id=?))",
+            (org_id, screen_id, item_type, json.dumps(content), duration, screen_id, org_id)
         ) as cur:
             row_id = cur.lastrowid
         await db.commit()
     return row_id
 
 
-async def update_playlist_item(item_id: int, item_type: str, content: dict, duration: int):
+async def update_playlist_item(
+    item_id: int, item_type: str, content: dict, duration: int,
+    org_id: int = DEFAULT_ORG_ID,
+):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "UPDATE playlist_items SET type=?, content=?, duration=? WHERE id=?",
-            (item_type, json.dumps(content), duration, item_id)
+            "UPDATE playlist_items SET type=?, content=?, duration=? WHERE id=? AND org_id=?",
+            (item_type, json.dumps(content), duration, item_id, org_id)
         )
         await db.commit()
 
 
-async def remove_playlist_item(item_id: int):
+async def remove_playlist_item(item_id: int, org_id: int = DEFAULT_ORG_ID):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM playlist_items WHERE id=?", (item_id,))
+        await db.execute(
+            "DELETE FROM playlist_items WHERE id=? AND org_id=?", (item_id, org_id)
+        )
         await db.commit()
 
 
-async def clear_playlist_items(screen_id: str):
+async def clear_playlist_items(screen_id: str, org_id: int = DEFAULT_ORG_ID):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM playlist_items WHERE screen_id=?", (screen_id,))
+        await db.execute(
+            "DELETE FROM playlist_items WHERE screen_id=? AND org_id=?", (screen_id, org_id)
+        )
         await db.commit()
 
 
-async def reorder_playlist_items(screen_id: str, ordered_ids: list[int]):
-    """Set sort_order to match the given id sequence."""
+async def reorder_playlist_items(
+    screen_id: str, ordered_ids: list[int], org_id: int = DEFAULT_ORG_ID
+):
     async with aiosqlite.connect(DB_PATH) as db:
         for order, item_id in enumerate(ordered_ids):
             await db.execute(
-                "UPDATE playlist_items SET sort_order=? WHERE id=? AND screen_id=?",
-                (order, item_id, screen_id)
+                "UPDATE playlist_items SET sort_order=? WHERE id=? AND screen_id=? AND org_id=?",
+                (order, item_id, screen_id, org_id)
             )
         await db.commit()

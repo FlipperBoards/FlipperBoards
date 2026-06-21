@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 
 
@@ -14,6 +15,16 @@ class Settings(BaseSettings):
     # API keys (set via environment or .env file)
     weather_api_key: Optional[str] = None
     news_api_key: Optional[str] = None
+
+    # Comma-separated list of plugin names to load (e.g. FB_PLUGINS=billing,analytics)
+    plugins: list[str] = []
+
+    @field_validator("plugins", mode="before")
+    @classmethod
+    def _parse_plugins(cls, v):
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v or []
 
     class Config:
         env_file = ".env"
