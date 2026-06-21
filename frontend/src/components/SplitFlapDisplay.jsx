@@ -63,34 +63,34 @@ export default function SplitFlapDisplay({
   const rowGap = `${dividerWidth}px`
 
   if (fillViewport) {
+    // CSS min() scales font to fit whichever dimension is tighter
+    const gridFontSize = `min(calc(100vw / ${cols} * 0.5), calc(100vh / ${rows} * 0.5))`
+
     return (
-      <div style={{ width: '100%', height: '100%', background: bgColor, display: 'flex', flexDirection: 'column' }}>
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: rowGap,
-            background: dividerColor,
-          }}
-        >
-          {normalizedMatrix.map((row, r) => (
-            <div key={r} style={{ flex: 1, display: 'flex', gap: colGap }}>
-              {row.map((code, c) => (
-                photoUrl
-                  ? <PhotoTile key={`${r}-${c}`} imageUrl={photoUrl} row={r} col={c} rows={rows} cols={cols}
-                      tileWidth={tilePixelWidth} tileHeight={tilePixelHeight} physicalMode={physicalMode} />
-                  : colorMatrix
-                    ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
-                        tileWidth={tilePixelWidth} tileHeight={tilePixelHeight}
-                        delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
-                    : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
-                        tileWidth={tilePixelWidth} tileHeight={tilePixelHeight}
-                        delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} extraShadow={tileShadow} />
-              ))}
-            </div>
-          ))}
-        </div>
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'grid',
+          gridTemplateColumns: `repeat(${cols}, 1fr)`,
+          gridTemplateRows: `repeat(${rows}, 1fr)`,
+          gap: `${dividerWidth}px`,
+          background: dividerColor,
+        }}
+      >
+        {normalizedMatrix.flatMap((row, r) =>
+          row.map((code, c) =>
+            photoUrl
+              ? <PhotoTile key={`${r}-${c}`} imageUrl={photoUrl} row={r} col={c} rows={rows} cols={cols}
+                  tileFill physicalMode={physicalMode} />
+              : colorMatrix
+                ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
+                    tileFill delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
+                : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                    tileFill gridFontSize={gridFontSize}
+                    delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} extraShadow={tileShadow} />
+          )
+        )}
       </div>
     )
   }

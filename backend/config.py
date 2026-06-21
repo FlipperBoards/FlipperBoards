@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 from typing import Optional
 
@@ -26,9 +26,7 @@ class Settings(BaseSettings):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v or []
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "FB_"
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="FB_")
 
 
 settings = Settings()

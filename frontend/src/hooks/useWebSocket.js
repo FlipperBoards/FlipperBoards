@@ -3,12 +3,14 @@ import { useEffect, useRef, useCallback } from 'react'
 export function useWebSocket(onMessage, screenId = 'main') {
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
+  const destroyedRef = useRef(false)
   const onMessageRef = useRef(onMessage)
   const screenIdRef = useRef(screenId)
   onMessageRef.current = onMessage
   screenIdRef.current = screenId
 
   const connect = useCallback(() => {
+    if (destroyedRef.current) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
     const url = `${protocol}//${host}/ws?screen=${encodeURIComponent(screenIdRef.current)}`
@@ -33,15 +35,19 @@ export function useWebSocket(onMessage, screenId = 'main') {
     }
 
     ws.onclose = () => {
-      reconnectTimer.current = setTimeout(connect, 2000)
+      if (!destroyedRef.current) {
+        reconnectTimer.current = setTimeout(connect, 2000)
+      }
     }
 
     ws.onerror = () => ws.close()
   }, []) // intentionally stable — screenId changes handled via ref
 
   useEffect(() => {
+    destroyedRef.current = false
     connect()
     return () => {
+      destroyedRef.current = true
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
     }

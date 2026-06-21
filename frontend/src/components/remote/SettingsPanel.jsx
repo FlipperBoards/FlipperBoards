@@ -57,8 +57,6 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        rows:              Number(s.rows) || 6,
-        cols:              Number(s.cols) || 22,
         rotation_interval: Number(s.rotation_interval) || 30,
         tile_color:        s.tile_color        || '#ffffff',
         bg_color:          s.bg_color          || '#111111',
@@ -91,18 +89,8 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         Settings
       </h2>
 
-      {/* Display size */}
+      {/* Display size — rows/cols are per-screen, managed in the Screens tab */}
       <Section title="Display">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Rows">
-            <input type="number" min={1} max={12} value={s.rows || 6}
-              onChange={e => set('rows', e.target.value)} className="fb-input" />
-          </Field>
-          <Field label="Columns">
-            <input type="number" min={1} max={40} value={s.cols || 22}
-              onChange={e => set('cols', e.target.value)} className="fb-input" />
-          </Field>
-        </div>
         <Field label="Rotation Interval">
           <div className="flex items-center gap-2">
             <input type="number" min={5} max={3600} value={s.rotation_interval || 30}
