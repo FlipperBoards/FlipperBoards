@@ -9,14 +9,16 @@ const MODE_META = {
   text:     { label: 'Text Messages',  icon: '✏️', desc: 'Custom messages' },
 }
 
-export default function ModeSelector({ modes, onUpdate }) {
+export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
   const [saving, setSaving] = useState(false)
+
+  const qs = `?screen=${encodeURIComponent(screenId)}`
 
   const toggle = async (mode, currentEnabled) => {
     const modeData = modes.find(m => m.mode === mode)
     if (!modeData) return
     setSaving(true)
-    await fetch(`/api/modes/${mode}`, {
+    await fetch(`/api/modes/${mode}${qs}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -31,11 +33,11 @@ export default function ModeSelector({ modes, onUpdate }) {
   }
 
   const nextMode = async () => {
-    await fetch('/api/display/next', { method: 'POST' })
+    await fetch(`/api/display/next${qs}`, { method: 'POST' })
   }
 
   const blankDisplay = async () => {
-    await fetch('/api/display/blank', { method: 'POST' })
+    await fetch(`/api/display/blank${qs}`, { method: 'POST' })
   }
 
   return (

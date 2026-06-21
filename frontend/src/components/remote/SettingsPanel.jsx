@@ -44,6 +44,9 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       news_api_key: s.news_api_key || '',
       calendar_ical_url: s.calendar_ical_url || '',
       sound_enabled: s.sound_enabled !== 'false',
+      divider_width: Number(s.divider_width) || 4,
+      divider_color: s.divider_color || '#111111',
+      physical_mode: s.physical_mode === 'true',
     }
     await fetch('/api/settings', {
       method: 'PUT',
@@ -222,6 +225,48 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       </section>
 
       {/* Save */}
+      {/* Physical Frame */}
+      <section className="space-y-3">
+        <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">
+          Physical Frame / Dowel Rods
+        </div>
+        <Field label="Physical Mode">
+          <select value={s.physical_mode === 'true' ? 'true' : 'false'}
+            onChange={e => handleChange('physical_mode', e.target.value)} className={selectCls}>
+            <option value="false">Standard</option>
+            <option value="true">Physical Frame (inset tiles, thicker frame)</option>
+          </select>
+        </Field>
+        <Field label="Divider Width (px) — simulates dowel rod thickness">
+          <input type="range" min={0} max={20} value={s.divider_width || 4}
+            onChange={e => handleChange('divider_width', e.target.value)}
+            className="w-full accent-blue-500" />
+          <div className="text-xs text-gray-500 font-mono mt-1">{s.divider_width || 4}px</div>
+        </Field>
+        <Field label="Divider Color — set to wood grain color for physical look">
+          <div className="flex items-center gap-2">
+            <input type="color" value={s.divider_color || '#111111'}
+              onChange={e => handleChange('divider_color', e.target.value)}
+              className="w-10 h-9 rounded border border-gray-600 cursor-pointer bg-transparent" />
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { label: 'Black', color: '#0a0a0a' },
+                { label: 'Dark Wood', color: '#3d2b1f' },
+                { label: 'Light Wood', color: '#8b6914' },
+                { label: 'Walnut', color: '#5c3d2e' },
+                { label: 'Steel', color: '#4a4a4a' },
+              ].map(p => (
+                <button key={p.color} onClick={() => handleChange('divider_color', p.color)}
+                  className="text-xs font-mono px-2 py-1 rounded border border-gray-600 hover:border-gray-400 transition-colors"
+                  style={{ background: p.color, color: '#fff' }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </Field>
+      </section>
+
       {/* Sound */}
       <section className="space-y-3">
         <div className="text-xs text-gray-600 font-mono uppercase tracking-widest border-b border-gray-700 pb-1">

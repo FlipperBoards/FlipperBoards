@@ -30,8 +30,9 @@ export default function FlapTile({
   tileColor = '#ffffff',
   tileBgColor = '#2a2a2a',
   size = 'md',
-  delay = 0,        // stagger delay in ms
+  delay = 0,
   soundEnabled = true,
+  extraShadow = undefined,  // additional CSS box-shadow for physical mode
 }) {
   const [displayCode, setDisplayCode] = useState(code)
   const [isFlipping, setIsFlipping] = useState(false)
@@ -99,7 +100,7 @@ export default function FlapTile({
     return (
       <div
         className={`flap-tile ${sz.tile} rounded-sm`}
-        style={{ background: hex, margin: sz.gap }}
+        style={{ background: hex, boxShadow: extraShadow }}
       />
     )
   }
@@ -107,7 +108,7 @@ export default function FlapTile({
   return (
     <div
       className={`flap-tile ${sz.tile} select-none`}
-      style={{ margin: sz.gap }}
+      style={{ boxShadow: extraShadow }}
     >
       {/* Top half — shows top of current char */}
       <div

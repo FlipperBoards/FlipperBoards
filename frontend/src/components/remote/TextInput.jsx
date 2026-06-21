@@ -1,23 +1,25 @@
 import React, { useState, useEffect } from 'react'
 
-export default function TextInput({ onRefresh }) {
+export default function TextInput({ screenId = 'main', onRefresh }) {
   const [text, setText] = useState('')
   const [messages, setMessages] = useState([])
   const [status, setStatus] = useState('')
   const [duration, setDuration] = useState(30)
 
+  const qs = `?screen=${encodeURIComponent(screenId)}`
+
   const fetchMessages = async () => {
-    const res = await fetch('/api/messages')
+    const res = await fetch(`/api/messages${qs}`)
     const data = await res.json()
     setMessages(data)
   }
 
-  useEffect(() => { fetchMessages() }, [])
+  useEffect(() => { fetchMessages() }, [screenId])
 
   const pushText = async (e) => {
     e.preventDefault()
     if (!text.trim()) return
-    await fetch('/api/display/text', {
+    await fetch(`/api/display/text${qs}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
@@ -29,7 +31,7 @@ export default function TextInput({ onRefresh }) {
 
   const addMessage = async () => {
     if (!text.trim()) return
-    await fetch('/api/messages', {
+    await fetch(`/api/messages${qs}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, duration }),

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import SplitFlapDisplay from './SplitFlapDisplay'
 import { useDisplayState } from '../hooks/useDisplayState'
 import { unlockAudio } from '../utils/audio'
@@ -17,36 +18,34 @@ function getTileSize(cols, viewportWidth) {
 
 function useWakeLock() {
   const lockRef = React.useRef(null)
-
   useEffect(() => {
     let released = false
-
     async function acquire() {
       if (!('wakeLock' in navigator)) return
       try {
         lockRef.current = await navigator.wakeLock.request('screen')
         lockRef.current.addEventListener('release', () => {
-          if (!released) acquire()  // re-acquire on visibility change
+          if (!released) acquire()
         })
-      } catch {
-        // Wake lock not available or permission denied — silent fail
-      }
+      } catch { /* silent */ }
     }
-
     acquire()
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') acquire()
-    })
-
+    const onVisible = () => { if (document.visibilityState === 'visible') acquire() }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       released = true
       lockRef.current?.release()
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 }
 
 export default function DisplayView() {
-  const { matrix, rows, cols, mode, appSettings, connected } = useDisplayState()
+  const [searchParams] = useSearchParams()
+  const screenId = searchParams.get('screen') || 'main'
+  const kiosk = searchParams.get('kiosk') === '1'
+
+  const { matrix, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
@@ -61,8 +60,8 @@ export default function DisplayView() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // Auto-hide controls after 4s of inactivity
   useEffect(() => {
+    if (kiosk) return
     const resetIdle = () => {
       setShowControls(true)
       clearTimeout(idleTimer.current)
@@ -76,13 +75,10 @@ export default function DisplayView() {
       window.removeEventListener('mousemove', resetIdle)
       window.removeEventListener('touchstart', resetIdle)
     }
-  }, [])
+  }, [kiosk])
 
   const handleClick = useCallback(() => {
-    if (!audioUnlocked) {
-      unlockAudio()
-      setAudioUnlocked(true)
-    }
+    if (!audioUnlocked) { unlockAudio(); setAudioUnlocked(true) }
   }, [audioUnlocked])
 
   const toggleFullscreen = useCallback(async () => {
@@ -100,6 +96,9 @@ export default function DisplayView() {
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
   const soundEnabled = appSettings.sound_enabled !== 'false'
+  const dividerWidth = parseInt(appSettings.divider_width || '4', 10)
+  const dividerColor = appSettings.divider_color || '#111111'
+  const physicalMode = appSettings.physical_mode === 'true'
 
   const modeLabels = {
     clock: 'CLOCK', weather: 'WEATHER', news: 'NEWS',
@@ -113,40 +112,36 @@ export default function DisplayView() {
       style={{ background: bgColor }}
       onClick={handleClick}
     >
-      {/* Connection status */}
-      {!connected && (
+      {!connected && !kiosk && (
         <div className="fixed top-4 right-4 bg-red-900/80 text-red-200 text-xs px-3 py-1 rounded-full font-mono animate-pulse">
           CONNECTING...
         </div>
       )}
 
-      {/* Mode indicator + controls (auto-hide) */}
-      <div
-        className="fixed top-4 left-0 right-0 flex items-center justify-between px-4 transition-opacity duration-700"
-        style={{ opacity: showControls ? 1 : 0 }}
-      >
-        <div className="text-xs font-mono tracking-widest opacity-30" style={{ color: tileColor }}>
-          {modeLabels[mode] || mode.toUpperCase()}
+      {!kiosk && (
+        <div
+          className="fixed top-4 left-0 right-0 flex items-center justify-between px-4 transition-opacity duration-700"
+          style={{ opacity: showControls ? 1 : 0, pointerEvents: showControls ? 'auto' : 'none' }}
+        >
+          <div className="text-xs font-mono tracking-widest opacity-30" style={{ color: tileColor }}>
+            {screenId !== 'main' && <span className="opacity-60">{screenId} · </span>}
+            {modeLabels[mode] || mode.toUpperCase()}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={toggleFullscreen}
+              className="text-xs font-mono opacity-20 hover:opacity-60 transition-opacity"
+              style={{ color: tileColor }}>
+              {isFullscreen ? '⊡' : '⊞'}
+            </button>
+            <a href={`/?screen=${screenId}`}
+              className="text-xs font-mono opacity-20 hover:opacity-60 transition-opacity"
+              style={{ color: tileColor }}>
+              CONTROL →
+            </a>
+          </div>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={toggleFullscreen}
-            className="text-xs font-mono opacity-20 hover:opacity-60 transition-opacity"
-            style={{ color: tileColor }}
-          >
-            {isFullscreen ? '⊡' : '⊞'}
-          </button>
-          <a
-            href="/"
-            className="text-xs font-mono opacity-20 hover:opacity-60 transition-opacity"
-            style={{ color: tileColor }}
-          >
-            CONTROL →
-          </a>
-        </div>
-      </div>
+      )}
 
-      {/* Main display */}
       <SplitFlapDisplay
         matrix={matrix}
         rows={rows}
@@ -156,14 +151,14 @@ export default function DisplayView() {
         bgColor="transparent"
         tileSize={tileSize}
         soundEnabled={soundEnabled && audioUnlocked}
+        dividerWidth={dividerWidth}
+        dividerColor={dividerColor}
+        physicalMode={physicalMode}
       />
 
-      {/* First-tap hint */}
-      {!audioUnlocked && (
-        <div
-          className="fixed bottom-6 left-0 right-0 text-center text-xs font-mono opacity-20 transition-opacity"
-          style={{ color: tileColor }}
-        >
+      {!audioUnlocked && !kiosk && (
+        <div className="fixed bottom-6 left-0 right-0 text-center text-xs font-mono opacity-20"
+          style={{ color: tileColor }}>
           TAP TO ENABLE SOUND
         </div>
       )}
