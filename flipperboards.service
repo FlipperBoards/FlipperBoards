@@ -1,0 +1,16 @@
+[Unit]
+Description=FlipperBoards Split-Flap Display
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/FlipperBoards/backend
+ExecStart=/home/pi/FlipperBoards/backend/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
