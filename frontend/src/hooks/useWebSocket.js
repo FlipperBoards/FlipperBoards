@@ -49,7 +49,10 @@ export function useWebSocket(onMessage, screenId = 'main') {
     return () => {
       destroyedRef.current = true
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
-      wsRef.current?.close()
+      if (wsRef.current) {
+        wsRef.current.onclose = null  // prevent stale handler from scheduling reconnect
+        wsRef.current.close()
+      }
     }
   }, [connect, screenId]) // reconnect when screenId changes
 
