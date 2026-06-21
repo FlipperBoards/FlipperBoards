@@ -20,8 +20,8 @@ COPY --from=backend-deps /usr/local/bin /usr/local/bin
 # Copy backend
 COPY backend/ .
 
-# Copy built frontend
-COPY --from=frontend-build /frontend/dist ./frontend/dist
+# Copy built frontend to the path main.py expects: ../frontend/dist relative to /app
+COPY --from=frontend-build /frontend/dist /frontend/dist
 
 EXPOSE 8000
 CMD ["python", "main.py"]
