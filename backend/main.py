@@ -6,16 +6,24 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import database
+import plugins as plugin_registry
 from websocket_manager import manager
 from charmap import blank_matrix, text_to_matrix
 from config import settings
+
+
+# ── Org resolution ────────────────────────────────────────────────────────────
+# Self-hosted: always org 1. SaaS: swap this dependency for JWT middleware.
+
+def get_org_id() -> int:
+    return database.DEFAULT_ORG_ID
 
 # ── Upload directory ──────────────────────────────────────────────────────────
 
@@ -266,7 +274,11 @@ _clock_task: asyncio.Task | None = None
 async def lifespan(app: FastAPI):
     global _clock_task
 
+    # Load plugins before DB init so they can register tables via on_db_init
+    loaded_plugins = plugin_registry.load(settings.plugins)
     await database.init_db()
+    await plugin_registry.startup(app, loaded_plugins)
+
     db_settings = await database.get_settings()
     screens = await database.get_screens()
 
@@ -308,6 +320,7 @@ async def lifespan(app: FastAPI):
     _clock_task.cancel()
     for sid in list(_screens.keys()):
         _stop_screen_rotation(sid)
+    await plugin_registry.shutdown()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
