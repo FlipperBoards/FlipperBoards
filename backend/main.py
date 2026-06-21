@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import database
+import mode_registry
 import plugins as plugin_registry
 from websocket_manager import manager
 from charmap import blank_matrix, text_to_matrix
@@ -59,45 +60,68 @@ def get_screen_state(screen_id: str) -> ScreenState:
     return _screens[screen_id]
 
 
-# ── Content rendering ─────────────────────────────────────────────────────────
+# ── Built-in mode registration ────────────────────────────────────────────────
 
-async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict) -> list:
+def _register_builtin_modes():
     from services.clock import get_clock_matrix
     from services.weather import get_weather_matrix
     from services.news import get_news_matrix
     from services.quotes import get_quote_matrix
     from services.calendar_svc import get_calendar_matrix
+    from mode_registry import ModeDefinition
 
-    if mode == "clock":
-        return get_clock_matrix(
-            rows, cols,
-            fmt=db_settings.get("clock_format", "12h"),
-            show_date=db_settings.get("show_date", "true") == "true",
-            timezone=db_settings.get("timezone", "UTC"),
-        )
-    elif mode == "weather":
-        return await get_weather_matrix(
-            rows, cols,
-            api_key=db_settings.get("weather_api_key", ""),
-            location=db_settings.get("weather_location", ""),
-            units=db_settings.get("weather_units", "imperial"),
-        )
-    elif mode == "news":
-        cats = json.loads(db_settings.get("news_categories", '["general"]'))
-        srcs = json.loads(db_settings.get("news_sources", "[]"))
-        return await get_news_matrix(
-            rows, cols,
-            api_key=db_settings.get("news_api_key", ""),
-            categories=cats, sources=srcs,
-        )
-    elif mode == "quotes":
+    async def render_clock(rows, cols, config, s):
+        return get_clock_matrix(rows, cols,
+            fmt=s.get("clock_format", "12h"),
+            show_date=s.get("show_date", "true") == "true",
+            timezone=s.get("timezone", "UTC"))
+
+    async def render_weather(rows, cols, config, s):
+        return await get_weather_matrix(rows, cols,
+            api_key=s.get("weather_api_key", ""),
+            location=s.get("weather_location", ""),
+            units=s.get("weather_units", "imperial"))
+
+    async def render_news(rows, cols, config, s):
+        cats = json.loads(s.get("news_categories", '["general"]'))
+        srcs = json.loads(s.get("news_sources", "[]"))
+        return await get_news_matrix(rows, cols,
+            api_key=s.get("news_api_key", ""), categories=cats, sources=srcs)
+
+    async def render_quotes(rows, cols, config, s):
         return await get_quote_matrix(rows, cols)
-    elif mode == "calendar":
-        return await get_calendar_matrix(
-            rows, cols,
-            ical_url=db_settings.get("calendar_ical_url", ""),
-            timezone=db_settings.get("timezone", "UTC"),
-        )
+
+    async def render_calendar(rows, cols, config, s):
+        return await get_calendar_matrix(rows, cols,
+            ical_url=s.get("calendar_ical_url", ""),
+            timezone=s.get("timezone", "UTC"))
+
+    builtin = [
+        ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
+        ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
+        ModeDefinition("news",     "News",          "📰", "Top headlines",           render=render_news),
+        ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    render=render_quotes),
+        ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
+        # text is special-cased: needs screen_id to query messages
+        ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         render=None),
+    ]
+    for m in builtin:
+        mode_registry.register(m)
+
+
+# ── Content rendering ─────────────────────────────────────────────────────────
+
+async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict, screen_id: str = "main", mode_config: dict | None = None) -> list:
+    # text mode is special: it reads per-screen messages from the DB
+    if mode == "text":
+        messages = await database.get_text_messages(screen_id)
+        from services.text_svc import get_text_matrix
+        return await get_text_matrix(rows, cols, messages)
+
+    # all other modes (built-in and plugin) go through the registry
+    matrix = await mode_registry.render(mode, rows, cols, mode_config or {}, db_settings)
+    if matrix is not None:
+        return matrix
     return blank_matrix(rows, cols)
 
 
@@ -117,12 +141,7 @@ async def _render_playlist_item(state: ScreenState):
         mode = content.get("mode", "clock")
         state.mode = mode
         db_settings = await database.get_settings()
-        if mode == "text":
-            messages = await database.get_text_messages(state.screen_id)
-            from services.text_svc import get_text_matrix
-            state.matrix = await get_text_matrix(state.rows, state.cols, messages)
-        else:
-            state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings)
+        state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings, screen_id=state.screen_id)
 
     elif item_type == "text":
         state.mode = "text_push"
@@ -160,19 +179,16 @@ async def advance_screen_mode(screen_id: str):
         return
 
     state.mode_idx = (state.mode_idx + 1) % len(enabled)
-    mode_name = enabled[state.mode_idx]["mode"]
+    mode_entry = enabled[state.mode_idx]
+    mode_name = mode_entry["mode"]
     state.mode = mode_name
     state.color_matrix = None
     state.photo_url = None
 
-    if mode_name == "text":
-        messages = await database.get_text_messages(screen_id)
-        from services.text_svc import get_text_matrix
-        matrix = await get_text_matrix(state.rows, state.cols, messages)
-    else:
-        matrix = await _render_mode(mode_name, state.rows, state.cols, db_settings)
-
-    state.matrix = matrix
+    state.matrix = await _render_mode(
+        mode_name, state.rows, state.cols, db_settings,
+        screen_id=screen_id, mode_config=mode_entry.get("config", {}),
+    )
     await _broadcast_screen(state)
 
 
@@ -277,6 +293,9 @@ async def lifespan(app: FastAPI):
     # Load plugins before DB init so they can register tables via on_db_init
     loaded_plugins = plugin_registry.load(settings.plugins)
     await database.init_db()
+
+    # Register built-in modes first, then plugin modes
+    _register_builtin_modes()
     await plugin_registry.startup(app, loaded_plugins)
 
     db_settings = await database.get_settings()
@@ -687,15 +706,46 @@ async def update_settings(body: SettingsUpdate):
 
 # ── Per-screen modes ──────────────────────────────────────────────────────────
 
+@app.get("/api/modes/available")
+async def list_available_modes():
+    """Full mode catalog — built-in + all plugin modes."""
+    return mode_registry.all_modes()
+
+
+def _merge_modes(db_modes: list[dict]) -> list[dict]:
+    """Merge per-screen DB state with the full mode catalog.
+
+    Modes registered by plugins that aren't yet in the DB appear as disabled.
+    Each entry includes label/icon/description from the registry.
+    """
+    db_by_id = {m["mode"]: m for m in db_modes}
+    result = []
+    for i, reg in enumerate(mode_registry.all_modes()):
+        db_state = db_by_id.get(reg["id"])
+        result.append({
+            "mode": reg["id"],
+            "label": reg["label"],
+            "icon": reg["icon"],
+            "description": reg["description"],
+            "enabled": db_state["enabled"] if db_state else False,
+            "sort_order": db_state["sort_order"] if db_state else 1000 + i,
+            "config": db_state["config"] if db_state else {},
+        })
+    result.sort(key=lambda m: m["sort_order"])
+    return result
+
+
 @app.get("/api/modes")
 async def get_modes(screen: str = Query(default="main")):
-    return await database.get_modes(screen)
+    db_modes = await database.get_modes(screen)
+    return _merge_modes(db_modes)
 
 
 @app.put("/api/modes/{mode}")
 async def update_mode(mode: str, body: ModeUpdate, screen: str = Query(default="main")):
     await database.update_mode(screen, mode, body.enabled, body.sort_order, body.config or {})
-    await manager.broadcast(screen, {"type": "modes_update", "modes": await database.get_modes(screen)})
+    db_modes = await database.get_modes(screen)
+    await manager.broadcast(screen, {"type": "modes_update", "modes": _merge_modes(db_modes)})
     return {"status": "ok"}
 
 
@@ -731,7 +781,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
     initial_msgs = [
         {"type": "settings_update", "settings": db_settings},
         {"type": "screens_update", "screens": screens_list},
-        {"type": "modes_update", "modes": await database.get_modes(screen)},
+        {"type": "modes_update", "modes": _merge_modes(await database.get_modes(screen))},
     ]
     if state:
         if state.photo_url is not None:
