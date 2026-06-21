@@ -8,12 +8,16 @@ const STEP_DELAY_MS = 60
 
 function getIntermediateChars(fromCode, toCode) {
   const total = CHARS.length
+  // For text-to-text transitions, skip color tile codes so they don't flash mid-animation
+  const skipColors = !isColorCode(fromCode) && !isColorCode(toCode)
   const steps = []
   let idx = fromCode
   let count = 0
   while (idx !== toCode && count < total) {
     idx = (idx + 1) % total
-    if (idx !== toCode) steps.push(idx)
+    if (idx !== toCode && !(skipColors && isColorCode(idx))) {
+      steps.push(idx)
+    }
     count++
   }
   const stride = Math.max(1, Math.floor(steps.length / FLIP_STEPS))
@@ -46,11 +50,11 @@ export default function FlapTile({
   const animTimers = useRef([])
 
   const sizeMap = {
-    xs: { w: 20,  h: 28,  fs: 10 },
-    sm: { w: 28,  h: 36,  fs: 12 },
-    md: { w: 40,  h: 56,  fs: 16 },
-    lg: { w: 56,  h: 80,  fs: 20 },
-    xl: { w: 80,  h: 112, fs: 30 },
+    xs: { w: 20,  h: 28,  fs: 13 },
+    sm: { w: 28,  h: 36,  fs: 17 },
+    md: { w: 40,  h: 56,  fs: 24 },
+    lg: { w: 56,  h: 80,  fs: 33 },
+    xl: { w: 80,  h: 112, fs: 47 },
   }
   const preset = sizeMap[size] || sizeMap.md
   const w  = tileWidth  ?? preset.w
@@ -98,8 +102,8 @@ export default function FlapTile({
   const targetChar = codeToChar(code)
 
   const fontStyle = {
-    fontFamily: '"Share Tech Mono", "Courier New", monospace',
-    letterSpacing: '0.02em',
+    fontFamily: '"Bebas Neue", "Share Tech Mono", monospace',
+    letterSpacing: '0.04em',
   }
 
   const tileStyle = tileFill

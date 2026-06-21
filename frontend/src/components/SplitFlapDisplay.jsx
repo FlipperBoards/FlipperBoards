@@ -63,8 +63,8 @@ export default function SplitFlapDisplay({
   const rowGap = `${dividerWidth}px`
 
   if (fillViewport) {
-    // CSS min() scales font to fit whichever dimension is tighter
-    const gridFontSize = `min(calc(100vw / ${cols} * 0.5), calc(100vh / ${rows} * 0.5))`
+    // CSS min() scales font to fit the tighter tile dimension; 0.7 fills ~70% of tile width
+    const gridFontSize = `min(calc(100vw / ${cols} * 0.7), calc(100vh / ${rows} * 0.85))`
 
     return (
       <div
