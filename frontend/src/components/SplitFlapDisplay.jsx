@@ -15,10 +15,13 @@ export default function SplitFlapDisplay({
   tileBgColor = '#2a2a2a',
   bgColor = '#1a1a1a',
   tileSize = 'md',
+  tilePixelWidth = null,   // explicit px — enables fill mode when set
+  tilePixelHeight = null,  // explicit px — enables fill mode when set
   soundEnabled = true,
   dividerWidth = 4,
   dividerColor = '#111111',
   physicalMode = false,
+  fillViewport = false,    // when true: no padding/shadow/header, flush fill
 }) {
   const prevMatrixRef = useRef([])
 
@@ -59,6 +62,39 @@ export default function SplitFlapDisplay({
   const colGap = `${dividerWidth}px`
   const rowGap = `${dividerWidth}px`
 
+  if (fillViewport) {
+    return (
+      <div style={{ width: '100%', height: '100%', background: bgColor, display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: rowGap,
+            background: dividerColor,
+          }}
+        >
+          {normalizedMatrix.map((row, r) => (
+            <div key={r} style={{ flex: 1, display: 'flex', gap: colGap }}>
+              {row.map((code, c) => (
+                photoUrl
+                  ? <PhotoTile key={`${r}-${c}`} imageUrl={photoUrl} row={r} col={c} rows={rows} cols={cols}
+                      tileWidth={tilePixelWidth} tileHeight={tilePixelHeight} physicalMode={physicalMode} />
+                  : colorMatrix
+                    ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
+                        tileWidth={tilePixelWidth} tileHeight={tilePixelHeight}
+                        delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
+                    : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                        tileWidth={tilePixelWidth} tileHeight={tilePixelHeight}
+                        delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} extraShadow={tileShadow} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       className="inline-flex flex-col items-center rounded-lg shadow-2xl"
@@ -97,34 +133,13 @@ export default function SplitFlapDisplay({
           <div key={r} className="flex" style={{ gap: colGap }}>
             {row.map((code, c) => (
               photoUrl
-                ? <PhotoTile
-                    key={`${r}-${c}`}
-                    imageUrl={photoUrl}
-                    row={r}
-                    col={c}
-                    rows={rows}
-                    cols={cols}
-                    size={tileSize}
-                    physicalMode={physicalMode}
-                  />
+                ? <PhotoTile key={`${r}-${c}`} imageUrl={photoUrl} row={r} col={c} rows={rows} cols={cols}
+                    size={tileSize} physicalMode={physicalMode} />
                 : colorMatrix
-                  ? <ColorTile
-                      key={`${r}-${c}`}
-                      color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
-                      size={tileSize}
-                      delay={staggerMap[r]?.[c] ?? 0}
-                      physicalMode={physicalMode}
-                    />
-                  : <FlapTile
-                      key={`${r}-${c}`}
-                      code={code}
-                      tileColor={tileColor}
-                      tileBgColor={tileBgColor}
-                      size={tileSize}
-                      delay={staggerMap[r]?.[c] ?? 0}
-                      soundEnabled={soundEnabled}
-                      extraShadow={tileShadow}
-                    />
+                  ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
+                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
+                  : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} extraShadow={tileShadow} />
             ))}
           </div>
         ))}

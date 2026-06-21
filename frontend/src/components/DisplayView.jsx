@@ -4,16 +4,12 @@ import SplitFlapDisplay from './SplitFlapDisplay'
 import { useDisplayState } from '../hooks/useDisplayState'
 import { unlockAudio } from '../utils/audio'
 
-function getTileSize(cols, viewportWidth) {
-  const tileWidths = { xs: 20, sm: 28, md: 40, lg: 56, xl: 80 }
-  const gap = 2
-  const padding = 48
-  const sizes = ['xl', 'lg', 'md', 'sm', 'xs']
-  for (const sz of sizes) {
-    const totalWidth = cols * (tileWidths[sz] + gap) + padding
-    if (totalWidth <= viewportWidth) return sz
-  }
-  return 'xs'
+function getFillTileDimensions(cols, rows, vpWidth, vpHeight, dividerWidth) {
+  const totalDivW = (cols - 1) * dividerWidth
+  const totalDivH = (rows - 1) * dividerWidth
+  const tileW = Math.floor((vpWidth  - totalDivW) / cols)
+  const tileH = Math.floor((vpHeight - totalDivH) / rows)
+  return { tileW: Math.max(8, tileW), tileH: Math.max(8, tileH) }
 }
 
 function useWakeLock() {
@@ -46,7 +42,8 @@ export default function DisplayView() {
   const kiosk = searchParams.get('kiosk') === '1'
 
   const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
-  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
+  const [viewportWidth,  setViewportWidth]  = useState(window.innerWidth)
+  const [viewportHeight, setViewportHeight] = useState(window.innerHeight)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [showControls, setShowControls] = useState(true)
@@ -55,7 +52,7 @@ export default function DisplayView() {
   useWakeLock()
 
   useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth)
+    const onResize = () => { setViewportWidth(window.innerWidth); setViewportHeight(window.innerHeight) }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -91,7 +88,7 @@ export default function DisplayView() {
     }
   }, [])
 
-  const tileSize = getTileSize(cols, viewportWidth)
+  const { tileW, tileH } = getFillTileDimensions(cols, rows, viewportWidth, viewportHeight, dividerWidth)
   const bgColor = appSettings.bg_color || '#111111'
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
@@ -109,8 +106,8 @@ export default function DisplayView() {
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center select-none"
-      style={{ background: bgColor }}
+      className="select-none"
+      style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: bgColor }}
       onClick={handleClick}
     >
       {!connected && !kiosk && (
@@ -151,12 +148,14 @@ export default function DisplayView() {
         cols={cols}
         tileColor={tileColor}
         tileBgColor={tileBgColor}
-        bgColor="transparent"
-        tileSize={tileSize}
+        bgColor={bgColor}
+        tilePixelWidth={tileW}
+        tilePixelHeight={tileH}
         soundEnabled={soundEnabled && audioUnlocked}
         dividerWidth={dividerWidth}
         dividerColor={dividerColor}
         physicalMode={physicalMode}
+        fillViewport={true}
       />
 
       {!audioUnlocked && !kiosk && (
