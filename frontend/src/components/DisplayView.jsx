@@ -45,7 +45,7 @@ export default function DisplayView() {
   const screenId = searchParams.get('screen') || 'main'
   const kiosk = searchParams.get('kiosk') === '1'
 
-  const { matrix, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
+  const { matrix, colorMatrix, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
@@ -144,6 +144,7 @@ export default function DisplayView() {
 
       <SplitFlapDisplay
         matrix={matrix}
+        colorMatrix={colorMatrix}
         rows={rows}
         cols={cols}
         tileColor={tileColor}

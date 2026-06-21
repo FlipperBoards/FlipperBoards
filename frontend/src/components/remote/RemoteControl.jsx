@@ -20,7 +20,7 @@ export default function RemoteControl() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeScreenId = searchParams.get('screen') || 'main'
 
-  const { matrix, rows, cols, mode, appSettings, modes, screens, connected } =
+  const { matrix, colorMatrix, rows, cols, mode, appSettings, modes, screens, connected } =
     useDisplayState(activeScreenId)
 
   const [activeTab, setActiveTab] = useState('display')
@@ -81,6 +81,7 @@ export default function RemoteControl() {
           <div className="flex justify-center">
             <SplitFlapDisplay
               matrix={matrix}
+              colorMatrix={colorMatrix}
               rows={rows}
               cols={cols}
               tileColor={tileColor}

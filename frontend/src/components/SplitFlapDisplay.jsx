@@ -1,10 +1,12 @@
 import React, { useMemo, useRef } from 'react'
 import FlapTile from './FlapTile'
+import ColorTile from './ColorTile'
 
 const STAGGER_MS_PER_COL = 30
 
 export default function SplitFlapDisplay({
   matrix = [],
+  colorMatrix = null,   // string[][] — when set, renders ColorTile instead of FlapTile
   rows = 6,
   cols = 22,
   tileColor = '#ffffff',
@@ -12,9 +14,9 @@ export default function SplitFlapDisplay({
   bgColor = '#1a1a1a',
   tileSize = 'md',
   soundEnabled = true,
-  dividerWidth = 4,    // gap between tiles in px — represents dowel rods
+  dividerWidth = 4,
   dividerColor = '#111111',
-  physicalMode = false, // adds depth shadows for physical frame look
+  physicalMode = false,
 }) {
   const prevMatrixRef = useRef([])
 
@@ -92,16 +94,24 @@ export default function SplitFlapDisplay({
         {normalizedMatrix.map((row, r) => (
           <div key={r} className="flex" style={{ gap: colGap }}>
             {row.map((code, c) => (
-              <FlapTile
-                key={`${r}-${c}`}
-                code={code}
-                tileColor={tileColor}
-                tileBgColor={tileBgColor}
-                size={tileSize}
-                delay={staggerMap[r]?.[c] ?? 0}
-                soundEnabled={soundEnabled}
-                extraShadow={tileShadow}
-              />
+              colorMatrix
+                ? <ColorTile
+                    key={`${r}-${c}`}
+                    color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
+                    size={tileSize}
+                    delay={staggerMap[r]?.[c] ?? 0}
+                    physicalMode={physicalMode}
+                  />
+                : <FlapTile
+                    key={`${r}-${c}`}
+                    code={code}
+                    tileColor={tileColor}
+                    tileBgColor={tileBgColor}
+                    size={tileSize}
+                    delay={staggerMap[r]?.[c] ?? 0}
+                    soundEnabled={soundEnabled}
+                    extraShadow={tileShadow}
+                  />
             ))}
           </div>
         ))}
