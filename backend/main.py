@@ -25,6 +25,7 @@ class ScreenState:
         self.rows = rows
         self.cols = cols
         self.matrix: list[list[int]] = blank_matrix(rows, cols)
+        self.color_matrix: list[list[str]] | None = None  # set when in full-color image mode
         self.mode: str = "clock"
         self.mode_idx: int = 0
         self.rotation_task: asyncio.Task | None = None
@@ -111,18 +112,28 @@ async def advance_screen_mode(screen_id: str):
         matrix = await _render_mode(mode_name, state.rows, state.cols, db_settings)
 
     state.matrix = matrix
+    state.color_matrix = None  # advancing mode always exits full-color image mode
     await _broadcast_screen(state)
 
 
 async def _broadcast_screen(state: ScreenState):
-    await manager.broadcast(state.screen_id, {
-        "type": "display_update",
-        "matrix": state.matrix,
-        "rows": state.rows,
-        "cols": state.cols,
-        "mode": state.mode,
-        "screen_id": state.screen_id,
-    })
+    if state.color_matrix is not None:
+        await manager.broadcast(state.screen_id, {
+            "type": "image_update",
+            "color_matrix": state.color_matrix,
+            "rows": state.rows,
+            "cols": state.cols,
+            "screen_id": state.screen_id,
+        })
+    else:
+        await manager.broadcast(state.screen_id, {
+            "type": "display_update",
+            "matrix": state.matrix,
+            "rows": state.rows,
+            "cols": state.cols,
+            "mode": state.mode,
+            "screen_id": state.screen_id,
+        })
 
 
 async def _rotation_loop(screen_id: str):
@@ -153,6 +164,7 @@ async def _clock_tick_loop():
                         timezone=db_settings.get("timezone", "UTC"),
                     )
                     state.matrix = matrix
+                    state.color_matrix = None
                     await _broadcast_screen(state)
     except asyncio.CancelledError:
         pass
@@ -231,6 +243,9 @@ class DisplayContent(BaseModel):
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
+
+class ColorMatrixContent(BaseModel):
+    color_matrix: list[list[str]]  # CSS hex colors e.g. "#ff5733"
 
 class SettingsUpdate(BaseModel):
     rotation_interval: Optional[int] = None
@@ -380,6 +395,7 @@ async def push_text(content: DisplayContent, screen: str = Query(default="main")
     state = get_screen_state(screen)
     matrix = text_to_matrix(content.text, state.rows, state.cols)
     state.matrix = matrix
+    state.color_matrix = None
     state.mode = "text_push"
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
@@ -394,6 +410,20 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state.rows = len(content.matrix)
     state.cols = len(content.matrix[0]) if content.matrix else 0
     state.mode = "matrix_push"
+    await _broadcast_screen(state)
+    return {"status": "ok", "screen": screen}
+
+
+@app.post("/api/display/color-matrix")
+async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(default="main")):
+    """Push a full-color RGB image matrix — each cell is a CSS hex color string."""
+    if not content.color_matrix:
+        raise HTTPException(400, "Empty color matrix")
+    state = get_screen_state(screen)
+    state.color_matrix = content.color_matrix
+    state.rows = len(content.color_matrix)
+    state.cols = len(content.color_matrix[0]) if content.color_matrix else state.cols
+    state.mode = "image_push"
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -491,14 +521,23 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
         {"type": "modes_update", "modes": await database.get_modes(screen)},
     ]
     if state:
-        initial_msgs.insert(0, {
-            "type": "display_update",
-            "matrix": state.matrix,
-            "rows": state.rows,
-            "cols": state.cols,
-            "mode": state.mode,
-            "screen_id": screen,
-        })
+        if state.color_matrix is not None:
+            initial_msgs.insert(0, {
+                "type": "image_update",
+                "color_matrix": state.color_matrix,
+                "rows": state.rows,
+                "cols": state.cols,
+                "screen_id": screen,
+            })
+        else:
+            initial_msgs.insert(0, {
+                "type": "display_update",
+                "matrix": state.matrix,
+                "rows": state.rows,
+                "cols": state.cols,
+                "mode": state.mode,
+                "screen_id": screen,
+            })
 
     import json as _json
     for msg in initial_msgs:
