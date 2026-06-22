@@ -745,6 +745,7 @@ def _merge_modes(db_modes: list[dict]) -> list[dict]:
             "label": reg["label"],
             "icon": reg["icon"],
             "description": reg["description"],
+            "config_schema": reg["config_schema"],
             "enabled": db_state["enabled"] if db_state else False,
             "sort_order": db_state["sort_order"] if db_state else 1000 + i,
             "config": db_state["config"] if db_state else {},
