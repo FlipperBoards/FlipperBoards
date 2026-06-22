@@ -112,11 +112,14 @@ body {
 
 /* ── Split-flap tile core styles ── */
 .flap-tile {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   perspective: 400px;
   position: relative;
   user-select: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .flap-tile-inner {
