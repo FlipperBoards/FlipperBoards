@@ -159,7 +159,11 @@ async def _render_playlist_item(state: ScreenState):
         mode = content.get("mode", "clock")
         state.mode = mode
         db_settings = await database.get_settings()
-        state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings, screen_id=state.screen_id)
+        mode_entries = await database.get_modes(state.screen_id)
+        mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
+        mode_config = mode_entry.get("config", {}) if mode_entry else {}
+        state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings,
+                                          screen_id=state.screen_id, mode_config=mode_config)
 
     elif item_type == "text":
         state.mode = "text_push"

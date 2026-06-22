@@ -63,9 +63,16 @@ export default function SplitFlapDisplay({
   const rowGap = `${dividerWidth}px`
 
   if (fillViewport) {
-    // Scale font to ~80% of tile height (Bebas Neue cap-height ≈ 0.85em).
-    // Width factor 1.7 keeps the widest char ('W' ≈ 0.55em) within the tile.
-    const gridFontSize = `min(calc(100vw / ${cols} * 1.7), calc(100vh / ${rows} * 0.9))`
+    // Compute explicit tile sizes so grid tracks are always equal — never 1fr.
+    // All reference implementations (flipoff, jatovarv, flappyboards, flapstr, …)
+    // use fixed computed sizes, never fractional units, for this exact reason.
+    const colGaps = (cols - 1) * dividerWidth
+    const rowGaps = (rows - 1) * dividerWidth
+    const tileCSSW = `calc((100vw - ${colGaps}px) / ${cols})`
+    const tileCSSH = `calc((100vh - ${rowGaps}px) / ${rows})`
+    // Bebas Neue: cap-height ≈ 0.85em, very condensed (W ≈ 0.55em wide).
+    // Height factor 0.9 → ~76% visual fill. Width factor 1.7 keeps wide chars in bounds.
+    const gridFontSize = `min(calc((100vw - ${colGaps}px) / ${cols} * 1.7), calc((100vh - ${rowGaps}px) / ${rows} * 0.9))`
 
     return (
       <div
@@ -73,8 +80,8 @@ export default function SplitFlapDisplay({
           position: 'fixed',
           inset: 0,
           display: 'grid',
-          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${cols}, ${tileCSSW})`,
+          gridTemplateRows: `repeat(${rows}, ${tileCSSH})`,
           gap: `${dividerWidth}px`,
           background: dividerColor,
         }}
