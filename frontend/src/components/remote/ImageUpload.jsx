@@ -16,11 +16,21 @@ const MODES = [
 export default function ImageUpload({ rows, cols, screenId = 'main' }) {
   const [mode, setMode] = useState('photo')
   const [preview, setPreview] = useState(null)
-  const [pending, setPending] = useState(null)
+  const [pending, setPending] = useState(null)   // {type, data, libraryId?}
   const [processing, setProcessing] = useState(false)
   const [pushed, setPushed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+
+  // Name / folder for the current pending image
+  const [nameInput, setNameInput] = useState('')
+  const [folderInput, setFolderInput] = useState('')
+
+  // Library
   const [library, setLibrary] = useState([])
+  const [activeFolder, setActiveFolder] = useState('_all')
+  const [editingId, setEditingId] = useState(null)
+  const [editName, setEditName] = useState('')
+
   const fileRef = useRef(null)
   const lastFileRef = useRef(null)
   const previewBlobRef = useRef(null)
@@ -40,6 +50,7 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     setPreview(null)
     setPending(null)
     setPushed(false)
+    setNameInput(file.name ? file.name.replace(/\.[^.]+$/, '') : '')
 
     if (previewBlobRef.current) {
       URL.revokeObjectURL(previewBlobRef.current)
@@ -79,31 +90,67 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     if (lastFileRef.current) process(lastFileRef.current, newMode)
   }
 
-  const useFromLibrary = useCallback(async (item) => {
-    try {
-      const res = await fetch(item.url)
-      const blob = await res.blob()
-      const file = new File([blob], item.filename, { type: blob.type || 'image/jpeg' })
-      handleFile(file)
-    } catch { /* silent */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, process])
+  // Use a library image — photo mode uses push-by-id; other modes re-download and process
+  const useFromLibrary = async (item) => {
+    setPushed(false)
+    if (mode === 'photo') {
+      setPreview(item.url)
+      setNameInput(item.name || '')
+      setFolderInput(item.folder || '')
+      setPending({ type: 'photo', data: null, libraryId: item.id })
+      lastFileRef.current = null
+    } else {
+      setProcessing(true)
+      try {
+        const res = await fetch(item.url)
+        const blob = await res.blob()
+        const file = new File([blob], item.name || 'image.jpg', { type: blob.type || 'image/jpeg' })
+        setNameInput(item.name || '')
+        setFolderInput(item.folder || '')
+        process(file, mode)
+      } catch {
+        setProcessing(false)
+      }
+    }
+  }
 
-  const deleteFromLibrary = useCallback(async (item, e) => {
+  const deleteFromLibrary = async (item, e) => {
     e.stopPropagation()
-    await fetch(`/api/uploads/${encodeURIComponent(item.filename)}`, { method: 'DELETE' })
+    await fetch(`/api/uploads/${item.id}`, { method: 'DELETE' })
     loadLibrary()
-  }, [loadLibrary])
+  }
+
+  const startRename = (item, e) => {
+    e.stopPropagation()
+    setEditingId(item.id)
+    setEditName(item.name || '')
+  }
+
+  const commitRename = async (id) => {
+    await fetch(`/api/uploads/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: editName }),
+    })
+    setEditingId(null)
+    loadLibrary()
+  }
 
   const push = async () => {
     if (!pending) return
     const qs = `?screen=${encodeURIComponent(screenId)}`
 
     if (pending.type === 'photo') {
-      const fd = new FormData()
-      fd.append('file', pending.data)
-      await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
-      loadLibrary()
+      if (pending.libraryId) {
+        await fetch(`/api/display/photo/push/${pending.libraryId}${qs}`, { method: 'POST' })
+      } else {
+        const fd = new FormData()
+        fd.append('file', pending.data)
+        if (nameInput.trim()) fd.append('name', nameInput.trim())
+        if (folderInput.trim()) fd.append('folder', folderInput.trim())
+        await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
+        loadLibrary()
+      }
     } else if (pending.type === 'color') {
       await fetch(`/api/display/color-matrix${qs}`, {
         method: 'POST',
@@ -120,6 +167,12 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     setPushed(true)
     setTimeout(() => setPushed(false), 3000)
   }
+
+  // Derived library state
+  const folders = [...new Set(library.map(i => i.folder).filter(Boolean))].sort()
+  const visibleLibrary = activeFolder === '_all'
+    ? library
+    : library.filter(i => i.folder === activeFolder)
 
   return (
     <div className="space-y-5">
@@ -231,6 +284,36 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
             )}
           </div>
 
+          {/* Name + folder (photo mode only — saved to library) */}
+          {mode === 'photo' && !pending?.libraryId && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="section-label">Name</label>
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  placeholder="Optional label"
+                  className="fb-input"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="section-label">Folder</label>
+                <input
+                  type="text"
+                  list="folder-suggestions"
+                  value={folderInput}
+                  onChange={e => setFolderInput(e.target.value)}
+                  placeholder="e.g. Logos"
+                  className="fb-input"
+                />
+                <datalist id="folder-suggestions">
+                  {folders.map(f => <option key={f} value={f} />)}
+                </datalist>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={push}
@@ -239,10 +322,7 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
             >
               {pushed ? '✓ Sent to Display' : 'Push to Display'}
             </button>
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="fb-btn-ghost px-4"
-            >
+            <button onClick={() => fileRef.current?.click()} className="fb-btn-ghost px-4">
               New
             </button>
           </div>
@@ -254,42 +334,89 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <p className="section-label">Saved Images</p>
-            <button onClick={loadLibrary} className="text-[11px] font-mono opacity-40 hover:opacity-80 transition-opacity"
-              style={{ color: 'var(--text-2)' }}>refresh</button>
+            <button
+              onClick={loadLibrary}
+              className="text-[11px] font-mono opacity-40 hover:opacity-80 transition-opacity"
+              style={{ color: 'var(--text-2)' }}
+            >
+              refresh
+            </button>
           </div>
+
+          {/* Folder tabs */}
+          {folders.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {['_all', ...folders].map(f => (
+                <button
+                  key={f}
+                  onClick={() => setActiveFolder(f)}
+                  className="text-[10px] font-mono px-2.5 py-1 rounded-lg transition-all"
+                  style={{
+                    background: activeFolder === f ? 'var(--accent-dim)' : 'var(--surface)',
+                    border: `1px solid ${activeFolder === f ? 'var(--accent-border)' : 'var(--border)'}`,
+                    color: activeFolder === f ? 'var(--accent)' : 'var(--text-3)',
+                  }}
+                >
+                  {f === '_all' ? 'All' : f}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Thumbnail grid */}
           <div
             className="rounded-xl p-3 overflow-y-auto"
-            style={{ background: 'var(--surface)', border: '1px solid var(--border)', maxHeight: 220 }}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', maxHeight: 280 }}
           >
             <div className="grid grid-cols-4 gap-2">
-              {library.map(item => (
-                <div
-                  key={item.filename}
-                  onClick={() => useFromLibrary(item)}
-                  className="relative rounded-lg overflow-hidden cursor-pointer group"
-                  style={{ aspectRatio: '1', background: '#000' }}
-                >
-                  <img
-                    src={item.url}
-                    alt={item.filename}
-                    className="w-full h-full object-cover"
-                  />
-                  {/* Delete button — appears on hover */}
-                  <button
-                    onClick={(e) => deleteFromLibrary(item, e)}
-                    className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    style={{ background: 'rgba(220,38,38,0.85)', color: '#fff', fontSize: 11, lineHeight: 1 }}
-                    title="Delete"
-                  >
-                    ×
-                  </button>
-                  {/* Use overlay */}
+              {visibleLibrary.map(item => (
+                <div key={item.id} className="flex flex-col gap-1">
+                  {/* Thumbnail */}
                   <div
-                    className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1"
-                    style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%)' }}
+                    onClick={() => useFromLibrary(item)}
+                    className="relative rounded-lg overflow-hidden cursor-pointer group"
+                    style={{ aspectRatio: '1', background: '#000' }}
                   >
-                    <span className="text-[9px] font-mono truncate w-full" style={{ color: '#fff' }}>use</span>
+                    <img src={item.url} alt={item.name || 'image'} className="w-full h-full object-cover" />
+                    {/* Hover overlay */}
+                    <div
+                      className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                      style={{ background: 'rgba(59,130,246,0.35)' }}
+                    >
+                      <span className="text-[10px] font-mono font-bold text-white">USE</span>
+                    </div>
+                    {/* Delete */}
+                    <button
+                      onClick={(e) => deleteFromLibrary(item, e)}
+                      className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"
+                      style={{ background: 'rgba(220,38,38,0.9)', fontSize: 10, lineHeight: 1 }}
+                      title="Delete"
+                    >
+                      ×
+                    </button>
                   </div>
+
+                  {/* Inline rename */}
+                  {editingId === item.id ? (
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      onBlur={() => commitRename(item.id)}
+                      onKeyDown={e => { if (e.key === 'Enter') commitRename(item.id); if (e.key === 'Escape') setEditingId(null) }}
+                      className="fb-input"
+                      style={{ fontSize: 9, padding: '2px 4px' }}
+                    />
+                  ) : (
+                    <button
+                      onClick={(e) => startRename(item, e)}
+                      className="text-left truncate text-[9px] font-mono opacity-50 hover:opacity-100 transition-opacity"
+                      style={{ color: 'var(--text-2)' }}
+                      title="Click to rename"
+                    >
+                      {item.name || 'Unnamed'}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

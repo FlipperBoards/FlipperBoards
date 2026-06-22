@@ -106,6 +106,19 @@ async def _create_tables(db: aiosqlite.Connection):
         )
     """)
 
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS image_library (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id       INTEGER NOT NULL DEFAULT 1,
+            filename     TEXT    NOT NULL UNIQUE,
+            name         TEXT    NOT NULL DEFAULT '',
+            folder       TEXT    NOT NULL DEFAULT '',
+            size         INTEGER NOT NULL DEFAULT 0,
+            content_type TEXT    NOT NULL DEFAULT 'image/jpeg',
+            created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
 
 async def _migrate(db: aiosqlite.Connection):
     """Add org_id to legacy tables that predate multi-tenant support."""
@@ -507,3 +520,101 @@ async def reorder_playlist_items(
                 (order, item_id, screen_id, org_id)
             )
         await db.commit()
+
+
+# ── Image library ─────────────────────────────────────────────────────────────
+
+async def add_image(filename: str, name: str = '', folder: str = '',
+                    size: int = 0, content_type: str = 'image/jpeg',
+                    org_id: int = DEFAULT_ORG_ID) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO image_library (org_id, filename, name, folder, size, content_type) "
+            "VALUES (?,?,?,?,?,?)",
+            (org_id, filename, name, folder, size, content_type),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_images(folder: str | None = None, org_id: int = DEFAULT_ORG_ID) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if folder is not None:
+            sql = ("SELECT id, filename, name, folder, size, content_type, created_at "
+                   "FROM image_library WHERE org_id=? AND folder=? ORDER BY created_at DESC")
+            params = (org_id, folder)
+        else:
+            sql = ("SELECT id, filename, name, folder, size, content_type, created_at "
+                   "FROM image_library WHERE org_id=? ORDER BY created_at DESC")
+            params = (org_id,)
+        async with db.execute(sql, params) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_image(image_id: int, org_id: int = DEFAULT_ORG_ID) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, filename, name, folder, size, content_type, created_at "
+            "FROM image_library WHERE id=? AND org_id=?",
+            (image_id, org_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def update_image(image_id: int, name: str | None = None, folder: str | None = None,
+                       org_id: int = DEFAULT_ORG_ID):
+    updates: dict = {}
+    if name is not None:
+        updates['name'] = name
+    if folder is not None:
+        updates['folder'] = folder
+    if not updates:
+        return
+    cols = ', '.join(f"{k}=?" for k in updates)
+    vals = list(updates.values()) + [image_id, org_id]
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"UPDATE image_library SET {cols} WHERE id=? AND org_id=?", vals)
+        await db.commit()
+
+
+async def delete_image(image_id: int, org_id: int = DEFAULT_ORG_ID) -> str | None:
+    """Removes the DB record and returns the filename (for disk cleanup), or None if not found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT filename FROM image_library WHERE id=? AND org_id=?", (image_id, org_id)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        await db.execute("DELETE FROM image_library WHERE id=? AND org_id=?", (image_id, org_id))
+        await db.commit()
+        return row[0]
+
+
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"}
+
+async def migrate_existing_uploads(upload_dir: str, org_id: int = DEFAULT_ORG_ID):
+    """One-time: register files already on disk that have no DB record yet."""
+    import os, mimetypes
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT filename FROM image_library WHERE org_id=?", (org_id,)) as cur:
+            known = {row[0] for row in await cur.fetchall()}
+        rows = []
+        for name in os.listdir(upload_dir):
+            if name in known or os.path.splitext(name)[1].lower() not in _IMAGE_EXTS:
+                continue
+            path = os.path.join(upload_dir, name)
+            if not os.path.isfile(path):
+                continue
+            rows.append((org_id, name, '', '', os.path.getsize(path),
+                         mimetypes.guess_type(name)[0] or 'image/jpeg'))
+        if rows:
+            await db.executemany(
+                "INSERT OR IGNORE INTO image_library "
+                "(org_id, filename, name, folder, size, content_type) VALUES (?,?,?,?,?,?)",
+                rows,
+            )
+            await db.commit()

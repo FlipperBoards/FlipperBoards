@@ -6,7 +6,9 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Depends
+import mimetypes
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -315,6 +317,7 @@ async def lifespan(app: FastAPI):
     # Load plugins before DB init so they can register tables via on_db_init
     loaded_plugins = plugin_registry.load(settings.plugins)
     await database.init_db()
+    await database.migrate_existing_uploads(UPLOAD_DIR)
 
     # Register built-in modes first, then plugin modes
     _register_builtin_modes()
@@ -404,6 +407,11 @@ class SettingsUpdate(BaseModel):
     physical_mode: Optional[bool] = None
     flip_duration: Optional[int] = None
 
+class ImageUpdate(BaseModel):
+    name: Optional[str] = None
+    folder: Optional[str] = None
+
+
 class ScreenCreate(BaseModel):
     id: str
     name: str
@@ -446,11 +454,28 @@ def _valid_screen_id(sid: str) -> bool:
 
 
 def _save_upload(file_bytes: bytes, original_filename: str) -> str:
+    """Write bytes to UPLOAD_DIR and return the bare filename (no path prefix)."""
     ext = os.path.splitext(original_filename or "image.jpg")[1].lower() or ".jpg"
     filename = f"{uuid.uuid4().hex}{ext}"
     with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
         f.write(file_bytes)
-    return f"/uploads/{filename}"
+    return filename
+
+
+async def _register_upload(file_bytes: bytes, original_filename: str,
+                            name: str = '', folder: str = '') -> dict:
+    """Save to disk, record in image_library, return {id, url, name, folder}."""
+    filename = _save_upload(file_bytes, original_filename)
+    ct = mimetypes.guess_type(original_filename)[0] or 'image/jpeg'
+    img_id = await database.add_image(
+        filename=filename,
+        name=name.strip(),
+        folder=folder.strip(),
+        size=len(file_bytes),
+        content_type=ct,
+    )
+    return {'id': img_id, 'url': f'/api/uploads/{img_id}/image',
+            'name': name.strip(), 'folder': folder.strip()}
 
 
 # ── Screen management ─────────────────────────────────────────────────────────
@@ -593,16 +618,35 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
 @app.post("/api/display/photo")
 async def push_photo(
     file: UploadFile = File(...),
+    name: str = Form(default=''),
+    folder: str = Form(default=''),
     screen: str = Query(default="main"),
 ):
     state = get_screen_state(screen)
     content = await file.read()
-    image_url = _save_upload(content, file.filename or "photo.jpg")
-    state.photo_url = image_url
+    img = await _register_upload(content, file.filename or "photo.jpg", name=name, folder=folder)
+    state.photo_url = img['url']
     state.color_matrix = None
     state.mode = "photo_push"
     await _broadcast_screen(state)
-    return {"status": "ok", "image_url": image_url, "screen": screen}
+    return {"status": "ok", "screen": screen, **img}
+
+
+@app.post("/api/display/photo/push/{image_id}")
+async def push_library_photo(image_id: int, screen: str = Query(default="main")):
+    """Push an already-uploaded library image to the display without re-uploading."""
+    img = await database.get_image(image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    path = os.path.join(UPLOAD_DIR, img['filename'])
+    if not os.path.isfile(path):
+        raise HTTPException(404, "File not found on disk")
+    state = get_screen_state(screen)
+    state.photo_url = f"/api/uploads/{image_id}/image"
+    state.color_matrix = None
+    state.mode = "photo_push"
+    await _broadcast_screen(state)
+    return {"status": "ok", "image_url": state.photo_url}
 
 
 @app.post("/api/display/blank")
@@ -624,42 +668,59 @@ async def next_mode(screen: str = Query(default="main")):
     return {"status": "ok", "mode": _screens[screen].mode}
 
 
-# ── File upload (for playlist photo items) ────────────────────────────────────
+# ── File upload / image library ────────────────────────────────────────────────
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Save an uploaded file and return its public URL. Does not affect the display."""
+async def upload_file(
+    file: UploadFile = File(...),
+    name: str = Form(default=''),
+    folder: str = Form(default=''),
+):
+    """Save an uploaded file, register in image library, return id + url."""
     content = await file.read()
-    url = _save_upload(content, file.filename or "image.jpg")
-    return {"url": url}
+    img = await _register_upload(content, file.filename or "image.jpg", name=name, folder=folder)
+    return img
 
-
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"}
 
 @app.get("/api/uploads")
 async def list_uploads():
-    """Return all uploaded image files sorted newest-first."""
-    files = []
-    for name in os.listdir(UPLOAD_DIR):
-        ext = os.path.splitext(name)[1].lower()
-        if ext not in _IMAGE_EXTS:
-            continue
-        path = os.path.join(UPLOAD_DIR, name)
-        if not os.path.isfile(path):
-            continue
-        stat = os.stat(path)
-        files.append({"filename": name, "url": f"/uploads/{name}", "size": stat.st_size, "modified": stat.st_mtime})
-    files.sort(key=lambda x: x["modified"], reverse=True)
-    return files
+    images = await database.get_images()
+    return [
+        {'id': img['id'], 'name': img['name'], 'folder': img['folder'],
+         'size': img['size'], 'created_at': img['created_at'],
+         'url': f'/api/uploads/{img["id"]}/image'}
+        for img in images
+    ]
 
 
-@app.delete("/api/uploads/{filename}")
-async def delete_upload(filename: str):
-    safe = os.path.basename(filename)
-    path = os.path.join(UPLOAD_DIR, safe)
+@app.get("/api/uploads/{image_id}/image")
+async def serve_upload(image_id: int):
+    img = await database.get_image(image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    path = os.path.join(UPLOAD_DIR, img['filename'])
     if not os.path.isfile(path):
-        raise HTTPException(404, "File not found")
-    os.remove(path)
+        raise HTTPException(404, "File not found on disk")
+    return FileResponse(path, media_type=img['content_type'])
+
+
+@app.patch("/api/uploads/{image_id}")
+async def update_upload_meta(image_id: int, body: ImageUpdate):
+    img = await database.get_image(image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    await database.update_image(image_id, name=body.name, folder=body.folder)
+    return {"status": "ok"}
+
+
+@app.delete("/api/uploads/{image_id}")
+async def delete_upload(image_id: int):
+    filename = await database.delete_image(image_id)
+    if filename is None:
+        raise HTTPException(404, "Image not found")
+    path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.isfile(path):
+        os.remove(path)
     return {"status": "deleted"}
 
 

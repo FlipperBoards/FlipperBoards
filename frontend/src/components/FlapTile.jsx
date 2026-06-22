@@ -76,9 +76,10 @@ export default function FlapTile({
     animTimers.current.forEach(clearTimeout)
     animTimers.current = []
 
-    // Cap intermediates so total animation fits within 900ms (leaves margin for 1s clock ticks)
+    // Cap so the full animation (stagger delay + steps) settles before the next 1s clock tick
     const stepMs = flipDurationRef.current
-    const maxIntermediates = Math.max(1, Math.floor(900 / (stepMs + 10)) - 1)
+    const budget = Math.max(50, 900 - delayRef.current)
+    const maxIntermediates = Math.max(1, Math.floor(budget / (stepMs + 10)) - 1)
     const intermediates = getIntermediateChars(fromCode, code, maxIntermediates)
     const sequence = [...intermediates, code]
 
