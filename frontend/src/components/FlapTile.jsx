@@ -50,16 +50,16 @@ export default function FlapTile({
   const animTimers = useRef([])
 
   const sizeMap = {
-    xs: { w: 20,  h: 28,  fs: 13 },
-    sm: { w: 28,  h: 36,  fs: 17 },
-    md: { w: 40,  h: 56,  fs: 24 },
-    lg: { w: 56,  h: 80,  fs: 33 },
-    xl: { w: 80,  h: 112, fs: 47 },
+    xs: { w: 20,  h: 28,  fs: 25 },
+    sm: { w: 28,  h: 36,  fs: 32 },
+    md: { w: 40,  h: 56,  fs: 50 },
+    lg: { w: 56,  h: 80,  fs: 71 },
+    xl: { w: 80,  h: 112, fs: 100 },
   }
   const preset = sizeMap[size] || sizeMap.md
   const w  = tileWidth  ?? preset.w
   const h  = tileHeight ?? preset.h
-  const fs = tileWidth  ? Math.max(9, Math.floor(Math.min(w, h) * 0.52)) : preset.fs
+  const fs = tileWidth  ? Math.max(9, Math.floor(Math.min(w, h) * 0.9)) : preset.fs
 
   useEffect(() => {
     if (code === prevCodeRef.current) return

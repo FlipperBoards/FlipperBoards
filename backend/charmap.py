@@ -90,14 +90,17 @@ def text_to_matrix(text: str, rows: int, cols: int) -> list[list[int]]:
     # Truncate to available rows
     lines = lines[:rows]
 
-    # Center each line and convert to codes
-    matrix = []
+    # Center each line horizontally and convert to codes
+    text_rows = []
     for line in lines:
         padding = (cols - len(line)) // 2
         centered = " " * padding + line
-        matrix.append(text_to_row(centered, cols))
+        text_rows.append(text_to_row(centered, cols))
 
-    # Fill remaining rows with blank
+    # Vertical centering: blank rows above so text block is centered
+    top_pad = (rows - len(text_rows)) // 2
+    matrix = [[0] * cols for _ in range(top_pad)]
+    matrix.extend(text_rows)
     while len(matrix) < rows:
         matrix.append([0] * cols)
 

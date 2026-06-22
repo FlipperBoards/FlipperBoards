@@ -15,6 +15,23 @@ function ConfigField({ fieldKey, schema, value, onChange }) {
     )
   }
 
+  if (schema.type === 'textarea') {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label className="section-label">{schema.label}</label>
+        <textarea
+          rows={4}
+          value={value ?? ''}
+          placeholder={schema.placeholder ?? ''}
+          onChange={e => onChange(e.target.value)}
+          className="fb-input"
+          style={{ resize: 'vertical', lineHeight: '1.5' }}
+        />
+        {schema.help && <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>{schema.help}</p>}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       <label className="section-label">{schema.label}</label>

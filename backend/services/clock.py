@@ -25,17 +25,21 @@ def get_clock_matrix(rows: int, cols: int, fmt: str = "12h",
     else:
         time_str = f"{now.hour:02d}:{now.minute:02d}:{now.second:02d}"
 
-    # Center time in first row
-    pad = (cols - len(time_str)) // 2
-    time_line = " " * pad + time_str
-    matrix[0] = text_to_row(time_line, cols)
+    def center(s):
+        return " " * max(0, (cols - len(s)) // 2) + s
 
+    # Determine content rows (time + optional date) then place them vertically centered
     if show_date and rows > 1:
         day_name = DAYS[now.weekday()]
         month = MONTHS[now.month - 1]
         date_str = f"{day_name}, {month} {now.day}, {now.year}"
-        pad = (cols - len(date_str)) // 2
-        date_line = " " * pad + date_str
-        matrix[1] = text_to_row(date_line, cols)
+        content_rows = [center(time_str), center(date_str)]
+    else:
+        content_rows = [center(time_str)]
+
+    top_row = (rows - len(content_rows)) // 2
+    for i, line in enumerate(content_rows):
+        if top_row + i < rows:
+            matrix[top_row + i] = text_to_row(line, cols)
 
     return matrix

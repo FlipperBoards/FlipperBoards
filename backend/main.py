@@ -89,21 +89,36 @@ def _register_builtin_modes():
             api_key=s.get("news_api_key", ""), categories=cats, sources=srcs)
 
     async def render_quotes(rows, cols, config, s):
-        return await get_quote_matrix(rows, cols)
+        return await get_quote_matrix(rows, cols, custom_quotes=config.get("custom_quotes", ""))
 
     async def render_calendar(rows, cols, config, s):
         return await get_calendar_matrix(rows, cols,
             ical_url=s.get("calendar_ical_url", ""),
             timezone=s.get("timezone", "UTC"))
 
+    _text_schema = {
+        "message": {
+            "type": "textarea",
+            "label": "Message",
+            "placeholder": "Enter text to display…",
+            "help": "Single message. Leave blank to use the Text tab rotation queue.",
+        }
+    }
+    _quotes_schema = {
+        "custom_quotes": {
+            "type": "textarea",
+            "label": "Custom Quotes (one per line)",
+            "placeholder": "Enter one quote per line…\nLeave blank to use built-in quotes.",
+            "help": "Optional. Overrides built-in quotes when filled in.",
+        }
+    }
     builtin = [
         ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
         ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
         ModeDefinition("news",     "News",          "📰", "Top headlines",           render=render_news),
-        ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    render=render_quotes),
+        ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    config_schema=_quotes_schema, render=render_quotes),
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
-        # text is special-cased: needs screen_id to query messages
-        ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         render=None),
+        ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
     ]
     for m in builtin:
         mode_registry.register(m)
@@ -112,8 +127,11 @@ def _register_builtin_modes():
 # ── Content rendering ─────────────────────────────────────────────────────────
 
 async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict, screen_id: str = "main", mode_config: dict | None = None) -> list:
-    # text mode is special: it reads per-screen messages from the DB
+    # text mode is special: config inline message overrides the DB rotation queue
     if mode == "text":
+        config = mode_config or {}
+        if config.get("message", "").strip():
+            return text_to_matrix(config["message"], rows, cols)
         messages = await database.get_text_messages(screen_id)
         from services.text_svc import get_text_matrix
         return await get_text_matrix(rows, cols, messages)

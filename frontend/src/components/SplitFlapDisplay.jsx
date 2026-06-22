@@ -63,8 +63,9 @@ export default function SplitFlapDisplay({
   const rowGap = `${dividerWidth}px`
 
   if (fillViewport) {
-    // CSS min() scales font to fit the tighter tile dimension; 0.7 fills ~70% of tile width
-    const gridFontSize = `min(calc(100vw / ${cols} * 0.7), calc(100vh / ${rows} * 0.85))`
+    // Scale font to ~80% of tile height (Bebas Neue cap-height ≈ 0.85em).
+    // Width factor 1.7 keeps the widest char ('W' ≈ 0.55em) within the tile.
+    const gridFontSize = `min(calc(100vw / ${cols} * 1.7), calc(100vh / ${rows} * 0.9))`
 
     return (
       <div
