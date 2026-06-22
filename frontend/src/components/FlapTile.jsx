@@ -5,7 +5,7 @@ import { playFlipSound } from '../utils/audio'
 // Show every intermediate character for short jumps; sample longer ones to this cap.
 const MAX_INTERMEDIATE = 10
 
-function getIntermediateChars(fromCode, toCode) {
+function getIntermediateChars(fromCode, toCode, maxCount = MAX_INTERMEDIATE) {
   const total = CHARS.length
   const skipColors = !isColorCode(fromCode) && !isColorCode(toCode)
   const steps = []
@@ -18,13 +18,13 @@ function getIntermediateChars(fromCode, toCode) {
     }
     count++
   }
-  if (steps.length <= MAX_INTERMEDIATE) return steps
+  if (steps.length <= maxCount) return steps
   // Long jump: sample evenly so we still show visible progression
-  const stride = Math.ceil(steps.length / MAX_INTERMEDIATE)
+  const stride = Math.ceil(steps.length / maxCount)
   const sampled = []
   for (let i = 0; i < steps.length; i += stride) {
     sampled.push(steps[i])
-    if (sampled.length >= MAX_INTERMEDIATE) break
+    if (sampled.length >= maxCount) break
   }
   return sampled
 }
@@ -76,13 +76,15 @@ export default function FlapTile({
     animTimers.current.forEach(clearTimeout)
     animTimers.current = []
 
-    const intermediates = getIntermediateChars(fromCode, code)
+    // Cap intermediates so total animation fits within 900ms (leaves margin for 1s clock ticks)
+    const stepMs = flipDurationRef.current
+    const maxIntermediates = Math.max(1, Math.floor(900 / (stepMs + 10)) - 1)
+    const intermediates = getIntermediateChars(fromCode, code, maxIntermediates)
     const sequence = [...intermediates, code]
 
     // Apply stagger delay before starting animation
     const staggerTimer = setTimeout(() => {
       sequence.forEach((stepCode, i) => {
-        const stepMs = flipDurationRef.current
         const t = setTimeout(() => {
           setFoldChar(codeToChar(stepCode))
           setRiseChar(codeToChar(stepCode))
