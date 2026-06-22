@@ -48,6 +48,10 @@ export default function FlapTile({
   const [riseChar, setRiseChar] = useState(codeToChar(code))
   const prevCodeRef = useRef(code)
   const animTimers = useRef([])
+  const delayRef = useRef(delay)
+  const soundEnabledRef = useRef(soundEnabled)
+  delayRef.current = delay
+  soundEnabledRef.current = soundEnabled
 
   const sizeMap = {
     xs: { w: 20,  h: 28,  fs: 25 },
@@ -79,7 +83,7 @@ export default function FlapTile({
           setFoldChar(codeToChar(stepCode))
           setRiseChar(codeToChar(stepCode))
           setIsFlipping(true)
-          if (soundEnabled && i === 0) playFlipSound()
+          if (soundEnabledRef.current && i === 0) playFlipSound()
           const t2 = setTimeout(() => {
             setDisplayCode(stepCode)
             setIsFlipping(stepCode !== code)
@@ -88,13 +92,13 @@ export default function FlapTile({
         }, i * (STEP_DELAY_MS + 10))
         animTimers.current.push(t)
       })
-    }, delay)
+    }, delayRef.current)
     animTimers.current.push(staggerTimer)
 
     return () => {
       animTimers.current.forEach(clearTimeout)
     }
-  }, [code, delay, soundEnabled])
+  }, [code])
 
   const isColor = isColorCode(displayCode)
   const targetIsColor = isColorCode(code)
