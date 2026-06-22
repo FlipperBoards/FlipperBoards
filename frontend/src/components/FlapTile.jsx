@@ -2,13 +2,11 @@ import React, { useState, useEffect, useRef } from 'react'
 import { CHARS, COLOR_HEX, isColorCode, codeToChar } from '../utils/charmap'
 import { playFlipSound } from '../utils/audio'
 
-// Number of intermediate frames when animating between characters
-const FLIP_STEPS = 3
-const STEP_DELAY_MS = 60
+// Show every intermediate character for short jumps; sample longer ones to this cap.
+const MAX_INTERMEDIATE = 10
 
 function getIntermediateChars(fromCode, toCode) {
   const total = CHARS.length
-  // For text-to-text transitions, skip color tile codes so they don't flash mid-animation
   const skipColors = !isColorCode(fromCode) && !isColorCode(toCode)
   const steps = []
   let idx = fromCode
@@ -20,11 +18,13 @@ function getIntermediateChars(fromCode, toCode) {
     }
     count++
   }
-  const stride = Math.max(1, Math.floor(steps.length / FLIP_STEPS))
+  if (steps.length <= MAX_INTERMEDIATE) return steps
+  // Long jump: sample evenly so we still show visible progression
+  const stride = Math.ceil(steps.length / MAX_INTERMEDIATE)
   const sampled = []
   for (let i = 0; i < steps.length; i += stride) {
     sampled.push(steps[i])
-    if (sampled.length >= FLIP_STEPS) break
+    if (sampled.length >= MAX_INTERMEDIATE) break
   }
   return sampled
 }
@@ -40,6 +40,7 @@ export default function FlapTile({
   gridFontSize = null,  // CSS font-size string for fill mode, e.g. 'min(calc(...))'
   delay = 0,
   soundEnabled = true,
+  flipDuration = 120,   // ms per step (fold + rise each use this duration)
   extraShadow = undefined,
 }) {
   const [displayCode, setDisplayCode] = useState(code)
@@ -50,8 +51,10 @@ export default function FlapTile({
   const animTimers = useRef([])
   const delayRef = useRef(delay)
   const soundEnabledRef = useRef(soundEnabled)
+  const flipDurationRef = useRef(flipDuration)
   delayRef.current = delay
   soundEnabledRef.current = soundEnabled
+  flipDurationRef.current = flipDuration
 
   const sizeMap = {
     xs: { w: 20,  h: 28,  fs: 25 },
@@ -79,6 +82,7 @@ export default function FlapTile({
     // Apply stagger delay before starting animation
     const staggerTimer = setTimeout(() => {
       sequence.forEach((stepCode, i) => {
+        const stepMs = flipDurationRef.current
         const t = setTimeout(() => {
           setFoldChar(codeToChar(stepCode))
           setRiseChar(codeToChar(stepCode))
@@ -87,9 +91,9 @@ export default function FlapTile({
           const t2 = setTimeout(() => {
             setDisplayCode(stepCode)
             setIsFlipping(stepCode !== code)
-          }, STEP_DELAY_MS)
+          }, stepMs)
           animTimers.current.push(t2)
-        }, i * (STEP_DELAY_MS + 10))
+        }, i * (stepMs + 10))
         animTimers.current.push(t)
       })
     }, delayRef.current)
@@ -110,9 +114,10 @@ export default function FlapTile({
     letterSpacing: '0.04em',
   }
 
+  const flipDur = `${flipDuration}ms`
   const tileStyle = tileFill
-    ? { width: '100%', height: '100%', boxShadow: extraShadow }
-    : { width: w, height: h, boxShadow: extraShadow }
+    ? { width: '100%', height: '100%', boxShadow: extraShadow, '--flip-dur': flipDur }
+    : { width: w, height: h, boxShadow: extraShadow, '--flip-dur': flipDur }
   const textStyle = { fontSize: tileFill ? (gridFontSize || '16px') : fs, lineHeight: 1 }
 
   if (isColor || targetIsColor) {

@@ -70,6 +70,7 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         news_api_key:      s.news_api_key      || '',
         calendar_ical_url: s.calendar_ical_url || '',
         sound_enabled:     s.sound_enabled !== 'false',
+        flip_duration:     Number(s.flip_duration) || 120,
         divider_width:     Number(s.divider_width) || 4,
         divider_color:     s.divider_color     || '#111111',
         physical_mode:     s.physical_mode === 'true',
@@ -97,6 +98,14 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
               onChange={e => set('rotation_interval', e.target.value)} className="fb-input" />
             <span className="text-[11px] font-mono flex-shrink-0" style={{ color: 'var(--text-3)' }}>sec</span>
           </div>
+        </Field>
+        <Field label="Flip Speed">
+          <select value={s.flip_duration || '120'} onChange={e => set('flip_duration', e.target.value)} className="fb-input">
+            <option value="60">Fast (60ms)</option>
+            <option value="120">Normal (120ms)</option>
+            <option value="200">Slow (200ms)</option>
+            <option value="350">Very Slow (350ms)</option>
+          </select>
         </Field>
       </Section>
 

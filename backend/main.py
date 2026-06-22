@@ -402,6 +402,7 @@ class SettingsUpdate(BaseModel):
     divider_width: Optional[int] = None
     divider_color: Optional[str] = None
     physical_mode: Optional[bool] = None
+    flip_duration: Optional[int] = None
 
 class ScreenCreate(BaseModel):
     id: str

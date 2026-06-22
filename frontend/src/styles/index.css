@@ -169,7 +169,7 @@ body {
 }
 
 .flap-fold.animate {
-  animation: flapFold 0.12s ease-in forwards;
+  animation: flapFold var(--flip-dur, 120ms) ease-in forwards;
 }
 
 @keyframes flapFold {
@@ -195,7 +195,7 @@ body {
 }
 
 .flap-rise.animate {
-  animation: flapRise 0.12s ease-out 0.06s forwards;
+  animation: flapRise var(--flip-dur, 120ms) ease-out calc(var(--flip-dur, 120ms) / 2) forwards;
   transform: rotateX(90deg);
 }
 

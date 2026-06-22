@@ -78,6 +78,7 @@ export default function DisplayView() {
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
   const soundEnabled = appSettings.sound_enabled !== 'false'
+  const flipDuration = parseInt(appSettings.flip_duration || '120', 10)
   const dividerWidth = parseInt(appSettings.divider_width || '4', 10)
   const dividerColor = appSettings.divider_color || '#111111'
   const physicalMode = appSettings.physical_mode === 'true'
@@ -135,6 +136,7 @@ export default function DisplayView() {
         tileBgColor={tileBgColor}
         bgColor={bgColor}
         soundEnabled={soundEnabled && audioUnlocked}
+        flipDuration={flipDuration}
         dividerWidth={dividerWidth}
         dividerColor={dividerColor}
         physicalMode={physicalMode}

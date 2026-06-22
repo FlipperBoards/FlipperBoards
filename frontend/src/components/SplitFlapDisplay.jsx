@@ -18,6 +18,7 @@ export default function SplitFlapDisplay({
   tilePixelWidth = null,   // explicit px — enables fill mode when set
   tilePixelHeight = null,  // explicit px — enables fill mode when set
   soundEnabled = true,
+  flipDuration = 120,
   dividerWidth = 4,
   dividerColor = '#111111',
   physicalMode = false,
@@ -96,7 +97,7 @@ export default function SplitFlapDisplay({
                     tileFill delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
                 : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
                     tileFill gridFontSize={gridFontSize}
-                    delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} extraShadow={tileShadow} />
+                    delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
           )
         )}
       </div>
@@ -147,7 +148,7 @@ export default function SplitFlapDisplay({
                   ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                       size={tileSize} delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
                   : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
-                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} extraShadow={tileShadow} />
+                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
             ))}
           </div>
         ))}
