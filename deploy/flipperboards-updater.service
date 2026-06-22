@@ -1,0 +1,12 @@
+[Unit]
+Description=FlipperBoards git auto-updater
+After=network-online.target
+
+[Service]
+Type=oneshot
+# ── change this to match your machine ──
+User=root
+# ───────────────────────────────────────
+ExecStart=/home/user/FlipperBoards/deploy/update.sh
+StandardOutput=journal
+StandardError=journal

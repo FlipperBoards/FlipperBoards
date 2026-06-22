@@ -1,0 +1,18 @@
+[Unit]
+Description=FlipperBoards Vite frontend
+After=network.target
+
+[Service]
+Type=simple
+# ── change these two lines to match your machine ──
+User=user
+WorkingDirectory=/home/user/FlipperBoards/frontend
+# ──────────────────────────────────────────────────
+ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
