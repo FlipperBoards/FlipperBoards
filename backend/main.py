@@ -634,6 +634,35 @@ async def upload_file(file: UploadFile = File(...)):
     return {"url": url}
 
 
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"}
+
+@app.get("/api/uploads")
+async def list_uploads():
+    """Return all uploaded image files sorted newest-first."""
+    files = []
+    for name in os.listdir(UPLOAD_DIR):
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in _IMAGE_EXTS:
+            continue
+        path = os.path.join(UPLOAD_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        stat = os.stat(path)
+        files.append({"filename": name, "url": f"/uploads/{name}", "size": stat.st_size, "modified": stat.st_mtime})
+    files.sort(key=lambda x: x["modified"], reverse=True)
+    return files
+
+
+@app.delete("/api/uploads/{filename}")
+async def delete_upload(filename: str):
+    safe = os.path.basename(filename)
+    path = os.path.join(UPLOAD_DIR, safe)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "File not found")
+    os.remove(path)
+    return {"status": "deleted"}
+
+
 # ── Universal content playlist ────────────────────────────────────────────────
 
 @app.get("/api/playlist")

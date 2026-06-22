@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import {
   imageToMatrix,
   imageToColorMatrix,
@@ -20,9 +20,19 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
   const [processing, setProcessing] = useState(false)
   const [pushed, setPushed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [library, setLibrary] = useState([])
   const fileRef = useRef(null)
   const lastFileRef = useRef(null)
   const previewBlobRef = useRef(null)
+
+  const loadLibrary = useCallback(async () => {
+    try {
+      const res = await fetch('/api/uploads')
+      if (res.ok) setLibrary(await res.json())
+    } catch { /* silent */ }
+  }, [])
+
+  useEffect(() => { loadLibrary() }, [loadLibrary])
 
   const process = useCallback(async (file, selectedMode) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -69,6 +79,22 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     if (lastFileRef.current) process(lastFileRef.current, newMode)
   }
 
+  const useFromLibrary = useCallback(async (item) => {
+    try {
+      const res = await fetch(item.url)
+      const blob = await res.blob()
+      const file = new File([blob], item.filename, { type: blob.type || 'image/jpeg' })
+      handleFile(file)
+    } catch { /* silent */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, process])
+
+  const deleteFromLibrary = useCallback(async (item, e) => {
+    e.stopPropagation()
+    await fetch(`/api/uploads/${encodeURIComponent(item.filename)}`, { method: 'DELETE' })
+    loadLibrary()
+  }, [loadLibrary])
+
   const push = async () => {
     if (!pending) return
     const qs = `?screen=${encodeURIComponent(screenId)}`
@@ -77,6 +103,7 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
       const fd = new FormData()
       fd.append('file', pending.data)
       await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
+      loadLibrary()
     } else if (pending.type === 'color') {
       await fetch(`/api/display/color-matrix${qs}`, {
         method: 'POST',
@@ -218,6 +245,54 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
             >
               New
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Saved image library */}
+      {library.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="section-label">Saved Images</p>
+            <button onClick={loadLibrary} className="text-[11px] font-mono opacity-40 hover:opacity-80 transition-opacity"
+              style={{ color: 'var(--text-2)' }}>refresh</button>
+          </div>
+          <div
+            className="rounded-xl p-3 overflow-y-auto"
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', maxHeight: 220 }}
+          >
+            <div className="grid grid-cols-4 gap-2">
+              {library.map(item => (
+                <div
+                  key={item.filename}
+                  onClick={() => useFromLibrary(item)}
+                  className="relative rounded-lg overflow-hidden cursor-pointer group"
+                  style={{ aspectRatio: '1', background: '#000' }}
+                >
+                  <img
+                    src={item.url}
+                    alt={item.filename}
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Delete button — appears on hover */}
+                  <button
+                    onClick={(e) => deleteFromLibrary(item, e)}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ background: 'rgba(220,38,38,0.85)', color: '#fff', fontSize: 11, lineHeight: 1 }}
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                  {/* Use overlay */}
+                  <div
+                    className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1"
+                    style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%)' }}
+                  >
+                    <span className="text-[9px] font-mono truncate w-full" style={{ color: '#fff' }}>use</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
