@@ -97,10 +97,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadDisplay(serverUrl: String, screenId: String) {
         val base = serverUrl.trimEnd('/')
-        val url = if (screenId.isBlank()) {
-            "$base/display?kiosk=1"
-        } else {
-            "$base/display?screen=$screenId&kiosk=1"
+        val soundParam = if (prefs.getBoolean("sound_enabled", true)) "1" else "0"
+        val url = buildString {
+            append("$base/display?kiosk=1")
+            if (screenId.isNotBlank()) append("&screen=$screenId")
+            append("&sound=$soundParam")
         }
         webView.loadUrl(url)
     }
@@ -113,10 +114,12 @@ class MainActivity : AppCompatActivity() {
         val screenSpinner = dialogView.findViewById<Spinner>(R.id.screenSpinner)
         val fetchButton = dialogView.findViewById<Button>(R.id.fetchScreensButton)
         val statusText = dialogView.findViewById<TextView>(R.id.statusText)
+        val soundSwitch = dialogView.findViewById<Switch>(R.id.soundSwitch)
 
         val currentUrl = prefs.getString("server_url", "") ?: ""
         val currentScreen = prefs.getString("screen_id", "") ?: ""
         urlInput.setText(currentUrl)
+        soundSwitch.isChecked = prefs.getBoolean("sound_enabled", true)
 
         val screenOptions = mutableListOf("Default (no screen)")
         val screenIds = mutableListOf("")
@@ -174,6 +177,7 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit()
                     .putString("server_url", newUrl)
                     .putString("screen_id", newScreen)
+                    .putBoolean("sound_enabled", soundSwitch.isChecked)
                     .apply()
                 if (newUrl.isNotBlank()) loadDisplay(newUrl, newScreen)
             }

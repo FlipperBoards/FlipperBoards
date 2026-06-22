@@ -6,4 +6,5 @@
     <string name="hint_server_url">http://192.168.1.100:8000</string>
     <string name="btn_fetch_screens">Fetch Screens</string>
     <string name="label_screen">Screen</string>
+    <string name="label_sound">Flip Sound Effects</string>
 </resources>
