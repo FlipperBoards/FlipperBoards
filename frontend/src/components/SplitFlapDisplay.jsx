@@ -73,8 +73,8 @@ export default function SplitFlapDisplay({
           position: 'fixed',
           inset: 0,
           display: 'grid',
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-          gridTemplateRows: `repeat(${rows}, 1fr)`,
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
           gap: `${dividerWidth}px`,
           background: dividerColor,
         }}
