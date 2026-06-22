@@ -2,13 +2,123 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ── */
+:root {
+  --bg:            #09091380;
+  --bg-base:       #090913;
+  --surface:       rgba(255,255,255,0.035);
+  --surface-hover: rgba(255,255,255,0.06);
+  --border:        rgba(255,255,255,0.08);
+  --border-bright: rgba(255,255,255,0.15);
+  --accent:        #3b82f6;
+  --accent-dim:    rgba(59,130,246,0.12);
+  --accent-border: rgba(59,130,246,0.45);
+  --accent-glow:   rgba(59,130,246,0.22);
+  --text-1:        #e2e8f0;
+  --text-2:        #94a3b8;
+  --text-3:        #475569;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Glass surface utilities ── */
+@layer utilities {
+  .glass {
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .glass-accent {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-border);
+  }
+  .glow-accent {
+    box-shadow: 0 0 24px var(--accent-glow), 0 4px 12px rgba(0,0,0,0.5);
+  }
+  .text-ink-1 { color: var(--text-1); }
+  .text-ink-2 { color: var(--text-2); }
+  .text-ink-3 { color: var(--text-3); }
+  .border-rim  { border-color: var(--border); }
+  .section-label {
+    font-size: 0.625rem;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+}
+
+/* ── Form inputs shared style ── */
+.fb-input {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8125rem;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  width: 100%;
+  transition: border-color 0.15s;
+  outline: none;
+}
+.fb-input:focus {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.fb-input::placeholder { color: var(--text-3); }
+
+/* ── Buttons ── */
+.fb-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 0.625rem;
+  padding: 0.625rem 1rem;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.fb-btn-primary:hover { background: #2563eb; box-shadow: 0 0 16px var(--accent-glow); }
+.fb-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.fb-btn-ghost {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 0.625rem;
+  padding: 0.625rem 1rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.fb-btn-ghost:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-bright);
+  color: var(--text-1);
+}
+
 /* ── Split-flap tile core styles ── */
 .flap-tile {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   perspective: 400px;
   position: relative;
   user-select: none;
+  min-width: 0;
+  min-height: 0;
 }
 
 .flap-tile-inner {
@@ -59,7 +169,7 @@
 }
 
 .flap-fold.animate {
-  animation: flapFold 0.12s ease-in forwards;
+  animation: flapFold var(--flip-dur, 120ms) ease-in forwards;
 }
 
 @keyframes flapFold {
@@ -85,7 +195,7 @@
 }
 
 .flap-rise.animate {
-  animation: flapRise 0.12s ease-out 0.06s forwards;
+  animation: flapRise var(--flip-dur, 120ms) ease-out calc(var(--flip-dur, 120ms) / 2) forwards;
   transform: rotateX(90deg);
 }
 
@@ -100,7 +210,7 @@
 }
 
 /* Scrollbar styling */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #1a1a1a; }
-::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #666; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }

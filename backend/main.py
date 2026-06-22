@@ -6,7 +6,9 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Depends
+import mimetypes
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -89,21 +91,36 @@ def _register_builtin_modes():
             api_key=s.get("news_api_key", ""), categories=cats, sources=srcs)
 
     async def render_quotes(rows, cols, config, s):
-        return await get_quote_matrix(rows, cols)
+        return await get_quote_matrix(rows, cols, custom_quotes=config.get("custom_quotes", ""))
 
     async def render_calendar(rows, cols, config, s):
         return await get_calendar_matrix(rows, cols,
             ical_url=s.get("calendar_ical_url", ""),
             timezone=s.get("timezone", "UTC"))
 
+    _text_schema = {
+        "message": {
+            "type": "textarea",
+            "label": "Message",
+            "placeholder": "Enter text to display…",
+            "help": "Single message. Leave blank to use the Text tab rotation queue.",
+        }
+    }
+    _quotes_schema = {
+        "custom_quotes": {
+            "type": "textarea",
+            "label": "Custom Quotes (one per line)",
+            "placeholder": "Enter one quote per line…\nLeave blank to use built-in quotes.",
+            "help": "Optional. Overrides built-in quotes when filled in.",
+        }
+    }
     builtin = [
         ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
         ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
         ModeDefinition("news",     "News",          "📰", "Top headlines",           render=render_news),
-        ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    render=render_quotes),
+        ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    config_schema=_quotes_schema, render=render_quotes),
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
-        # text is special-cased: needs screen_id to query messages
-        ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         render=None),
+        ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
     ]
     for m in builtin:
         mode_registry.register(m)
@@ -112,8 +129,11 @@ def _register_builtin_modes():
 # ── Content rendering ─────────────────────────────────────────────────────────
 
 async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict, screen_id: str = "main", mode_config: dict | None = None) -> list:
-    # text mode is special: it reads per-screen messages from the DB
+    # text mode is special: config inline message overrides the DB rotation queue
     if mode == "text":
+        config = mode_config or {}
+        if config.get("message", "").strip():
+            return text_to_matrix(config["message"], rows, cols)
         messages = await database.get_text_messages(screen_id)
         from services.text_svc import get_text_matrix
         return await get_text_matrix(rows, cols, messages)
@@ -141,7 +161,11 @@ async def _render_playlist_item(state: ScreenState):
         mode = content.get("mode", "clock")
         state.mode = mode
         db_settings = await database.get_settings()
-        state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings, screen_id=state.screen_id)
+        mode_entries = await database.get_modes(state.screen_id)
+        mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
+        mode_config = mode_entry.get("config", {}) if mode_entry else {}
+        state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings,
+                                          screen_id=state.screen_id, mode_config=mode_config)
 
     elif item_type == "text":
         state.mode = "text_push"
@@ -293,6 +317,7 @@ async def lifespan(app: FastAPI):
     # Load plugins before DB init so they can register tables via on_db_init
     loaded_plugins = plugin_registry.load(settings.plugins)
     await database.init_db()
+    await database.migrate_existing_uploads(UPLOAD_DIR)
 
     # Register built-in modes first, then plugin modes
     _register_builtin_modes()
@@ -380,6 +405,12 @@ class SettingsUpdate(BaseModel):
     divider_width: Optional[int] = None
     divider_color: Optional[str] = None
     physical_mode: Optional[bool] = None
+    flip_duration: Optional[int] = None
+
+class ImageUpdate(BaseModel):
+    name: Optional[str] = None
+    folder: Optional[str] = None
+
 
 class ScreenCreate(BaseModel):
     id: str
@@ -423,11 +454,28 @@ def _valid_screen_id(sid: str) -> bool:
 
 
 def _save_upload(file_bytes: bytes, original_filename: str) -> str:
+    """Write bytes to UPLOAD_DIR and return the bare filename (no path prefix)."""
     ext = os.path.splitext(original_filename or "image.jpg")[1].lower() or ".jpg"
     filename = f"{uuid.uuid4().hex}{ext}"
     with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
         f.write(file_bytes)
-    return f"/uploads/{filename}"
+    return filename
+
+
+async def _register_upload(file_bytes: bytes, original_filename: str,
+                            name: str = '', folder: str = '') -> dict:
+    """Save to disk, record in image_library, return {id, url, name, folder}."""
+    filename = _save_upload(file_bytes, original_filename)
+    ct = mimetypes.guess_type(original_filename)[0] or 'image/jpeg'
+    img_id = await database.add_image(
+        filename=filename,
+        name=name.strip(),
+        folder=folder.strip(),
+        size=len(file_bytes),
+        content_type=ct,
+    )
+    return {'id': img_id, 'url': f'/api/uploads/{img_id}/image',
+            'name': name.strip(), 'folder': folder.strip()}
 
 
 # ── Screen management ─────────────────────────────────────────────────────────
@@ -570,16 +618,35 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
 @app.post("/api/display/photo")
 async def push_photo(
     file: UploadFile = File(...),
+    name: str = Form(default=''),
+    folder: str = Form(default=''),
     screen: str = Query(default="main"),
 ):
     state = get_screen_state(screen)
     content = await file.read()
-    image_url = _save_upload(content, file.filename or "photo.jpg")
-    state.photo_url = image_url
+    img = await _register_upload(content, file.filename or "photo.jpg", name=name, folder=folder)
+    state.photo_url = img['url']
     state.color_matrix = None
     state.mode = "photo_push"
     await _broadcast_screen(state)
-    return {"status": "ok", "image_url": image_url, "screen": screen}
+    return {"status": "ok", "screen": screen, **img}
+
+
+@app.post("/api/display/photo/push/{image_id}")
+async def push_library_photo(image_id: int, screen: str = Query(default="main")):
+    """Push an already-uploaded library image to the display without re-uploading."""
+    img = await database.get_image(image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    path = os.path.join(UPLOAD_DIR, img['filename'])
+    if not os.path.isfile(path):
+        raise HTTPException(404, "File not found on disk")
+    state = get_screen_state(screen)
+    state.photo_url = f"/api/uploads/{image_id}/image"
+    state.color_matrix = None
+    state.mode = "photo_push"
+    await _broadcast_screen(state)
+    return {"status": "ok", "image_url": state.photo_url}
 
 
 @app.post("/api/display/blank")
@@ -601,14 +668,62 @@ async def next_mode(screen: str = Query(default="main")):
     return {"status": "ok", "mode": _screens[screen].mode}
 
 
-# ── File upload (for playlist photo items) ────────────────────────────────────
+# ── File upload / image library ────────────────────────────────────────────────
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Save an uploaded file and return its public URL. Does not affect the display."""
+async def upload_file(
+    file: UploadFile = File(...),
+    name: str = Form(default=''),
+    folder: str = Form(default=''),
+):
+    """Save an uploaded file, register in image library, return id + url."""
     content = await file.read()
-    url = _save_upload(content, file.filename or "image.jpg")
-    return {"url": url}
+    img = await _register_upload(content, file.filename or "image.jpg", name=name, folder=folder)
+    return img
+
+
+@app.get("/api/uploads")
+async def list_uploads():
+    images = await database.get_images()
+    return [
+        {'id': img['id'], 'name': img['name'], 'folder': img['folder'],
+         'size': img['size'], 'created_at': img['created_at'],
+         'url': f'/api/uploads/{img["id"]}/image'}
+        for img in images
+    ]
+
+
+@app.get("/api/uploads/{image_id}/image")
+async def serve_upload(image_id: int):
+    img = await database.get_image(image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    path = os.path.join(UPLOAD_DIR, img['filename'])
+    if not os.path.isfile(path):
+        raise HTTPException(404, "File not found on disk")
+    return FileResponse(path, media_type=img['content_type'])
+
+
+@app.patch("/api/uploads/{image_id}")
+async def update_upload_meta(image_id: int, body: ImageUpdate):
+    img = await database.get_image(image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    await database.update_image(image_id, name=body.name, folder=body.folder)
+    return {"status": "ok"}
+
+
+@app.delete("/api/uploads/{image_id}")
+async def delete_upload(image_id: int):
+    filename = await database.delete_image(image_id)
+    if filename is None:
+        raise HTTPException(404, "Image not found")
+    path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.isfile(path):
+        os.remove(path)
+    # Remove playlist items that reference this image so queue entries don't 404
+    await database.remove_playlist_items_by_image_url(f"/api/uploads/{image_id}/image")
+    return {"status": "deleted"}
 
 
 # ── Universal content playlist ────────────────────────────────────────────────
@@ -727,6 +842,7 @@ def _merge_modes(db_modes: list[dict]) -> list[dict]:
             "label": reg["label"],
             "icon": reg["icon"],
             "description": reg["description"],
+            "config_schema": reg["config_schema"],
             "enabled": db_state["enabled"] if db_state else False,
             "sort_order": db_state["sort_order"] if db_state else 1000 + i,
             "config": db_state["config"] if db_state else {},

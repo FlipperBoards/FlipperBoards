@@ -2,25 +2,29 @@ import React, { useState, useEffect, useRef } from 'react'
 import { CHARS, COLOR_HEX, isColorCode, codeToChar } from '../utils/charmap'
 import { playFlipSound } from '../utils/audio'
 
-// Number of intermediate frames when animating between characters
-const FLIP_STEPS = 3
-const STEP_DELAY_MS = 60
+// Show every intermediate character for short jumps; sample longer ones to this cap.
+const MAX_INTERMEDIATE = 10
 
-function getIntermediateChars(fromCode, toCode) {
+function getIntermediateChars(fromCode, toCode, maxCount = MAX_INTERMEDIATE) {
   const total = CHARS.length
+  const skipColors = !isColorCode(fromCode) && !isColorCode(toCode)
   const steps = []
   let idx = fromCode
   let count = 0
   while (idx !== toCode && count < total) {
     idx = (idx + 1) % total
-    if (idx !== toCode) steps.push(idx)
+    if (idx !== toCode && !(skipColors && isColorCode(idx))) {
+      steps.push(idx)
+    }
     count++
   }
-  const stride = Math.max(1, Math.floor(steps.length / FLIP_STEPS))
+  if (steps.length <= maxCount) return steps
+  // Long jump: sample evenly so we still show visible progression
+  const stride = Math.ceil(steps.length / maxCount)
   const sampled = []
   for (let i = 0; i < steps.length; i += stride) {
     sampled.push(steps[i])
-    if (sampled.length >= FLIP_STEPS) break
+    if (sampled.length >= maxCount) break
   }
   return sampled
 }
@@ -30,9 +34,14 @@ export default function FlapTile({
   tileColor = '#ffffff',
   tileBgColor = '#2a2a2a',
   size = 'md',
+  tileWidth = null,     // explicit px — overrides size preset
+  tileHeight = null,    // explicit px — overrides size preset
+  tileFill = false,     // when true: fills CSS grid cell (100% × 100%)
+  gridFontSize = null,  // CSS font-size string for fill mode, e.g. 'min(calc(...))'
   delay = 0,
   soundEnabled = true,
-  extraShadow = undefined,  // additional CSS box-shadow for physical mode
+  flipDuration = 120,   // ms per step (fold + rise each use this duration)
+  extraShadow = undefined,
 }) {
   const [displayCode, setDisplayCode] = useState(code)
   const [isFlipping, setIsFlipping] = useState(false)
@@ -40,15 +49,24 @@ export default function FlapTile({
   const [riseChar, setRiseChar] = useState(codeToChar(code))
   const prevCodeRef = useRef(code)
   const animTimers = useRef([])
+  const delayRef = useRef(delay)
+  const soundEnabledRef = useRef(soundEnabled)
+  const flipDurationRef = useRef(flipDuration)
+  delayRef.current = delay
+  soundEnabledRef.current = soundEnabled
+  flipDurationRef.current = flipDuration
 
   const sizeMap = {
-    xs: { tile: 'w-5 h-7', text: 'text-[10px]', gap: '1px' },
-    sm: { tile: 'w-7 h-9', text: 'text-xs', gap: '1px' },
-    md: { tile: 'w-10 h-14', text: 'text-base', gap: '2px' },
-    lg: { tile: 'w-14 h-20', text: 'text-xl', gap: '2px' },
-    xl: { tile: 'w-20 h-28', text: 'text-3xl', gap: '3px' },
+    xs: { w: 20,  h: 28,  fs: 25 },
+    sm: { w: 28,  h: 36,  fs: 32 },
+    md: { w: 40,  h: 56,  fs: 50 },
+    lg: { w: 56,  h: 80,  fs: 71 },
+    xl: { w: 80,  h: 112, fs: 100 },
   }
-  const sz = sizeMap[size] || sizeMap.md
+  const preset = sizeMap[size] || sizeMap.md
+  const w  = tileWidth  ?? preset.w
+  const h  = tileHeight ?? preset.h
+  const fs = tileWidth  ? Math.max(9, Math.floor(Math.min(w, h) * 0.9)) : preset.fs
 
   useEffect(() => {
     if (code === prevCodeRef.current) return
@@ -58,7 +76,12 @@ export default function FlapTile({
     animTimers.current.forEach(clearTimeout)
     animTimers.current = []
 
-    const intermediates = getIntermediateChars(fromCode, code)
+    // Cap so the full animation (stagger delay + steps) settles before the next 1s clock tick.
+    // Allow 0 intermediates when budget is tight — still shows fold+rise for the final char.
+    const stepMs = flipDurationRef.current
+    const budget = 900 - delayRef.current
+    const maxIntermediates = Math.max(0, Math.floor(budget / (stepMs + 10)) - 1)
+    const intermediates = getIntermediateChars(fromCode, code, maxIntermediates)
     const sequence = [...intermediates, code]
 
     // Apply stagger delay before starting animation
@@ -68,22 +91,22 @@ export default function FlapTile({
           setFoldChar(codeToChar(stepCode))
           setRiseChar(codeToChar(stepCode))
           setIsFlipping(true)
-          if (soundEnabled && i === 0) playFlipSound()
+          if (soundEnabledRef.current && i === 0) playFlipSound()
           const t2 = setTimeout(() => {
             setDisplayCode(stepCode)
             setIsFlipping(stepCode !== code)
-          }, STEP_DELAY_MS)
+          }, stepMs)
           animTimers.current.push(t2)
-        }, i * (STEP_DELAY_MS + 10))
+        }, i * (stepMs + 10))
         animTimers.current.push(t)
       })
-    }, delay)
+    }, delayRef.current)
     animTimers.current.push(staggerTimer)
 
     return () => {
       animTimers.current.forEach(clearTimeout)
     }
-  }, [code, delay, soundEnabled])
+  }, [code])
 
   const isColor = isColorCode(displayCode)
   const targetIsColor = isColorCode(code)
@@ -91,86 +114,48 @@ export default function FlapTile({
   const targetChar = codeToChar(code)
 
   const fontStyle = {
-    fontFamily: '"Share Tech Mono", "Courier New", monospace',
-    letterSpacing: '0.02em',
+    fontFamily: '"Bebas Neue", "Share Tech Mono", monospace',
+    letterSpacing: '0.04em',
   }
+
+  const flipDur = `${flipDuration}ms`
+  const tileStyle = tileFill
+    ? { width: '100%', height: '100%', boxShadow: extraShadow, '--flip-dur': flipDur }
+    : { width: w, height: h, boxShadow: extraShadow, '--flip-dur': flipDur }
+  const textStyle = { fontSize: tileFill ? (gridFontSize || '16px') : fs, lineHeight: 1 }
 
   if (isColor || targetIsColor) {
     const hex = COLOR_HEX[isColor ? displayCode : code] || '#f1faee'
     return (
-      <div
-        className={`flap-tile ${sz.tile} rounded-sm`}
-        style={{ background: hex, boxShadow: extraShadow }}
-      />
+      <div className="flap-tile rounded-sm" style={{ ...tileStyle, background: hex }} />
     )
   }
 
   return (
-    <div
-      className={`flap-tile ${sz.tile} select-none`}
-      style={{ boxShadow: extraShadow }}
-    >
+    <div className="flap-tile select-none" style={tileStyle}>
       {/* Top half — shows top of current char */}
-      <div
-        className="flap-top"
-        style={{
-          height: '50%',
-          background: tileBgColor,
-          color: tileColor,
-          ...fontStyle,
-        }}
-      >
-        <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(50%)' }}>
-          {char}
-        </span>
+      <div className="flap-top" style={{ height: '50%', background: tileBgColor, color: tileColor, ...fontStyle }}>
+        <span style={{ ...textStyle, transform: 'translateY(50%)' }}>{char}</span>
       </div>
 
       {/* Bottom half — shows bottom of current char */}
-      <div
-        className="flap-bottom"
-        style={{
-          height: '50%',
-          background: tileBgColor,
-          color: tileColor,
-          ...fontStyle,
-        }}
-      >
-        <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(-50%)' }}>
-          {char}
-        </span>
+      <div className="flap-bottom" style={{ height: '50%', background: tileBgColor, color: tileColor, ...fontStyle }}>
+        <span style={{ ...textStyle, transform: 'translateY(-50%)' }}>{char}</span>
       </div>
 
       {/* Fold-down animation — top half folding away */}
       {isFlipping && (
-        <div
-          key={`fold-${foldChar}-${Date.now()}`}
-          className="flap-fold animate"
-          style={{
-            background: tileBgColor,
-            color: tileColor,
-            ...fontStyle,
-          }}
-        >
-          <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(50%)' }}>
-            {foldChar}
-          </span>
+        <div key={`fold-${foldChar}-${Date.now()}`} className="flap-fold animate"
+          style={{ background: tileBgColor, color: tileColor, ...fontStyle }}>
+          <span style={{ ...textStyle, transform: 'translateY(50%)' }}>{foldChar}</span>
         </div>
       )}
 
       {/* Rise animation — bottom half of next char appearing */}
       {isFlipping && (
-        <div
-          key={`rise-${riseChar}-${Date.now()}`}
-          className="flap-rise animate"
-          style={{
-            background: tileBgColor,
-            color: tileColor,
-            ...fontStyle,
-          }}
-        >
-          <span className={sz.text} style={{ lineHeight: 1, transform: 'translateY(-50%)' }}>
-            {riseChar}
-          </span>
+        <div key={`rise-${riseChar}-${Date.now()}`} className="flap-rise animate"
+          style={{ background: tileBgColor, color: tileColor, ...fontStyle }}>
+          <span style={{ ...textStyle, transform: 'translateY(-50%)' }}>{riseChar}</span>
         </div>
       )}
     </div>

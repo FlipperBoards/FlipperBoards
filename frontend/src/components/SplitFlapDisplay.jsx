@@ -15,10 +15,14 @@ export default function SplitFlapDisplay({
   tileBgColor = '#2a2a2a',
   bgColor = '#1a1a1a',
   tileSize = 'md',
+  tilePixelWidth = null,   // explicit px — enables fill mode when set
+  tilePixelHeight = null,  // explicit px — enables fill mode when set
   soundEnabled = true,
+  flipDuration = 120,
   dividerWidth = 4,
   dividerColor = '#111111',
   physicalMode = false,
+  fillViewport = false,    // when true: no padding/shadow/header, flush fill
 }) {
   const prevMatrixRef = useRef([])
 
@@ -59,6 +63,47 @@ export default function SplitFlapDisplay({
   const colGap = `${dividerWidth}px`
   const rowGap = `${dividerWidth}px`
 
+  if (fillViewport) {
+    // Compute explicit tile sizes so grid tracks are always equal — never 1fr.
+    // All reference implementations (flipoff, jatovarv, flappyboards, flapstr, …)
+    // use fixed computed sizes, never fractional units, for this exact reason.
+    const colGaps = (cols - 1) * dividerWidth
+    const rowGaps = (rows - 1) * dividerWidth
+    const tileCSSW = `calc((100vw - ${colGaps}px) / ${cols})`
+    const tileCSSH = `calc((100vh - ${rowGaps}px) / ${rows})`
+    // Bebas Neue: cap-height ≈ 0.85em, very condensed (W ≈ 0.55em wide).
+    // Height factor 0.9 → ~76% visual fill. Width factor 1.7 keeps wide chars in bounds.
+    const gridFontSize = `min(calc((100vw - ${colGaps}px) / ${cols} * 1.7), calc((100vh - ${rowGaps}px) / ${rows} * 0.9))`
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'grid',
+          gridTemplateColumns: `repeat(${cols}, ${tileCSSW})`,
+          gridTemplateRows: `repeat(${rows}, ${tileCSSH})`,
+          gap: `${dividerWidth}px`,
+          background: dividerColor,
+        }}
+      >
+        {normalizedMatrix.flatMap((row, r) =>
+          row.map((code, c) =>
+            photoUrl
+              ? <PhotoTile key={`${r}-${c}`} imageUrl={photoUrl} row={r} col={c} rows={rows} cols={cols}
+                  tileFill physicalMode={physicalMode} />
+              : colorMatrix
+                ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
+                    tileFill delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
+                : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                    tileFill gridFontSize={gridFontSize}
+                    delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
+          )
+        )}
+      </div>
+    )
+  }
+
   return (
     <div
       className="inline-flex flex-col items-center rounded-lg shadow-2xl"
@@ -97,34 +142,13 @@ export default function SplitFlapDisplay({
           <div key={r} className="flex" style={{ gap: colGap }}>
             {row.map((code, c) => (
               photoUrl
-                ? <PhotoTile
-                    key={`${r}-${c}`}
-                    imageUrl={photoUrl}
-                    row={r}
-                    col={c}
-                    rows={rows}
-                    cols={cols}
-                    size={tileSize}
-                    physicalMode={physicalMode}
-                  />
+                ? <PhotoTile key={`${r}-${c}`} imageUrl={photoUrl} row={r} col={c} rows={rows} cols={cols}
+                    size={tileSize} physicalMode={physicalMode} />
                 : colorMatrix
-                  ? <ColorTile
-                      key={`${r}-${c}`}
-                      color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
-                      size={tileSize}
-                      delay={staggerMap[r]?.[c] ?? 0}
-                      physicalMode={physicalMode}
-                    />
-                  : <FlapTile
-                      key={`${r}-${c}`}
-                      code={code}
-                      tileColor={tileColor}
-                      tileBgColor={tileBgColor}
-                      size={tileSize}
-                      delay={staggerMap[r]?.[c] ?? 0}
-                      soundEnabled={soundEnabled}
-                      extraShadow={tileShadow}
-                    />
+                  ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
+                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
+                  : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
             ))}
           </div>
         ))}

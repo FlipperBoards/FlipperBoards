@@ -24,7 +24,7 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     })
-    setStatus('Sent!')
+    setStatus('sent')
     setTimeout(() => setStatus(''), 2000)
     setText('')
   }
@@ -46,71 +46,97 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-mono text-gray-200 font-semibold tracking-wider uppercase">
+    <div className="space-y-5">
+      <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
         Push Text
       </h2>
 
-      {/* Quick send */}
-      <form onSubmit={pushText} className="space-y-2">
+      {/* Compose area */}
+      <div
+        className="rounded-xl overflow-hidden"
+        style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+      >
         <textarea
-          className="w-full bg-gray-800 text-white font-mono text-sm rounded-lg p-3 border border-gray-600 focus:border-blue-500 focus:outline-none resize-none"
+          className="w-full bg-transparent font-mono text-sm p-4 resize-none focus:outline-none"
+          style={{ color: 'var(--text-1)' }}
           rows={3}
-          placeholder="Type a message to display..."
+          placeholder="Type a message to display…"
           value={text}
           onChange={e => setText(e.target.value)}
         />
-        <div className="flex gap-2">
-          <button
-            type="submit"
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-mono text-sm rounded-lg py-2 transition-colors"
-          >
-            SEND NOW
-          </button>
-          <button
-            type="button"
-            onClick={addMessage}
-            className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-mono text-sm rounded-lg py-2 transition-colors"
-          >
-            + ADD TO ROTATION
-          </button>
+        <div
+          className="flex items-center justify-between gap-2 px-3 pb-3"
+          style={{ borderTop: '1px solid var(--border)' }}
+        >
+          <div className="flex items-center gap-2 pt-2">
+            <label className="section-label whitespace-nowrap">Hold</label>
+            <input
+              type="number"
+              min={5}
+              max={600}
+              value={duration}
+              onChange={e => setDuration(Number(e.target.value))}
+              className="w-16 text-center fb-input py-1"
+            />
+            <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>sec</span>
+          </div>
+          <div className="flex gap-2 pt-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={addMessage}
+              disabled={!text.trim()}
+              className="fb-btn-ghost text-[11px] px-3 py-1.5"
+            >
+              + Rotation
+            </button>
+            <button
+              type="submit"
+              form="text-form"
+              onClick={pushText}
+              disabled={!text.trim()}
+              className="fb-btn-primary text-[11px] px-4 py-1.5"
+              style={status === 'sent' ? { background: '#16a34a' } : {}}
+            >
+              {status === 'sent' ? '✓ Sent' : 'Send Now'}
+            </button>
+          </div>
         </div>
-        {status && (
-          <div className="text-green-400 text-xs font-mono text-center">{status}</div>
-        )}
-      </form>
-
-      {/* Duration */}
-      <div className="flex items-center gap-3">
-        <label className="text-gray-400 text-xs font-mono uppercase tracking-wider w-24">Duration</label>
-        <input
-          type="number"
-          min={5}
-          max={600}
-          value={duration}
-          onChange={e => setDuration(Number(e.target.value))}
-          className="w-20 bg-gray-800 text-white font-mono text-sm rounded px-2 py-1 border border-gray-600 focus:outline-none"
-        />
-        <span className="text-gray-500 text-xs font-mono">seconds</span>
       </div>
 
       {/* Saved messages */}
       {messages.length > 0 && (
         <div className="space-y-2">
-          <div className="text-xs text-gray-500 font-mono uppercase tracking-wider">Rotation Messages</div>
+          <p className="section-label">Rotation Queue</p>
           {messages.map(msg => (
-            <div key={msg.id} className="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2">
-              <span className="flex-1 text-sm font-mono text-gray-300 truncate">{msg.text}</span>
-              <span className="text-xs text-gray-600 font-mono w-12 text-right">{msg.duration}s</span>
+            <div
+              key={msg.id}
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5"
+              style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+            >
+              <span className="flex-1 text-xs font-mono truncate" style={{ color: 'var(--text-2)' }}>
+                {msg.text}
+              </span>
+              <span className="text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-3)' }}>
+                {msg.duration}s
+              </span>
               <button
                 onClick={() => deleteMessage(msg.id)}
-                className="text-gray-600 hover:text-red-400 transition-colors text-sm ml-1"
+                className="text-sm flex-shrink-0 transition-colors"
+                style={{ color: 'var(--text-3)' }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#ef4444' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)' }}
               >
-                ✕
+                ×
               </button>
             </div>
           ))}
         </div>
+      )}
+
+      {messages.length === 0 && (
+        <p className="text-[11px] font-mono text-center py-2" style={{ color: 'var(--text-3)' }}>
+          Messages added to rotation will cycle automatically
+        </p>
       )}
     </div>
   )

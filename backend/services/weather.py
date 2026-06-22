@@ -112,16 +112,17 @@ async def _open_meteo(rows, cols, location, units, unit_sym):
 
 
 def _build_matrix(rows, cols, city, country, temp, feels, high, low, humidity, desc, unit_sym):
+    lines = [
+        f"{city}, {country}  {temp}°{unit_sym}",
+        desc,
+        f"H:{high}° L:{low}°  FEELS {feels}°",
+        f"HUMIDITY: {humidity}%",
+    ]
+    content = lines[:rows]
+    top = (rows - len(content)) // 2
     matrix = blank_matrix(rows, cols)
-    loc_str = f"{city}, {country}  {temp}°{unit_sym}"
-    matrix[0] = text_to_row(_center(loc_str, cols), cols)
-    if rows > 1:
-        matrix[1] = text_to_row(_center(desc, cols), cols)
-    if rows > 2:
-        detail = f"H:{high}° L:{low}°  FEELS {feels}°"
-        matrix[2] = text_to_row(_center(detail, cols), cols)
-    if rows > 3:
-        matrix[3] = text_to_row(_center(f"HUMIDITY: {humidity}%", cols), cols)
+    for i, line in enumerate(content):
+        matrix[top + i] = text_to_row(_center(line, cols), cols)
     return matrix
 
 

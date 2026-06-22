@@ -4,17 +4,6 @@ import SplitFlapDisplay from './SplitFlapDisplay'
 import { useDisplayState } from '../hooks/useDisplayState'
 import { unlockAudio } from '../utils/audio'
 
-function getTileSize(cols, viewportWidth) {
-  const tileWidths = { xs: 20, sm: 28, md: 40, lg: 56, xl: 80 }
-  const gap = 2
-  const padding = 48
-  const sizes = ['xl', 'lg', 'md', 'sm', 'xs']
-  for (const sz of sizes) {
-    const totalWidth = cols * (tileWidths[sz] + gap) + padding
-    if (totalWidth <= viewportWidth) return sz
-  }
-  return 'xs'
-}
 
 function useWakeLock() {
   const lockRef = React.useRef(null)
@@ -46,7 +35,6 @@ export default function DisplayView() {
   const kiosk = searchParams.get('kiosk') === '1'
 
   const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
-  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [showControls, setShowControls] = useState(true)
@@ -54,11 +42,6 @@ export default function DisplayView() {
 
   useWakeLock()
 
-  useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
 
   useEffect(() => {
     if (kiosk) return
@@ -91,11 +74,11 @@ export default function DisplayView() {
     }
   }, [])
 
-  const tileSize = getTileSize(cols, viewportWidth)
   const bgColor = appSettings.bg_color || '#111111'
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
   const soundEnabled = appSettings.sound_enabled !== 'false'
+  const flipDuration = parseInt(appSettings.flip_duration || '120', 10)
   const dividerWidth = parseInt(appSettings.divider_width || '4', 10)
   const dividerColor = appSettings.divider_color || '#111111'
   const physicalMode = appSettings.physical_mode === 'true'
@@ -109,8 +92,8 @@ export default function DisplayView() {
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center select-none"
-      style={{ background: bgColor }}
+      className="select-none"
+      style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: bgColor }}
       onClick={handleClick}
     >
       {!connected && !kiosk && (
@@ -122,7 +105,7 @@ export default function DisplayView() {
       {!kiosk && (
         <div
           className="fixed top-4 left-0 right-0 flex items-center justify-between px-4 transition-opacity duration-700"
-          style={{ opacity: showControls ? 1 : 0, pointerEvents: showControls ? 'auto' : 'none' }}
+          style={{ opacity: showControls ? 1 : 0, pointerEvents: showControls ? 'auto' : 'none', zIndex: 10 }}
         >
           <div className="text-xs font-mono tracking-widest opacity-30" style={{ color: tileColor }}>
             {screenId !== 'main' && <span className="opacity-60">{screenId} · </span>}
@@ -151,17 +134,18 @@ export default function DisplayView() {
         cols={cols}
         tileColor={tileColor}
         tileBgColor={tileBgColor}
-        bgColor="transparent"
-        tileSize={tileSize}
+        bgColor={bgColor}
         soundEnabled={soundEnabled && audioUnlocked}
+        flipDuration={flipDuration}
         dividerWidth={dividerWidth}
         dividerColor={dividerColor}
         physicalMode={physicalMode}
+        fillViewport
       />
 
       {!audioUnlocked && !kiosk && (
         <div className="fixed bottom-6 left-0 right-0 text-center text-xs font-mono opacity-20"
-          style={{ color: tileColor }}>
+          style={{ color: tileColor, zIndex: 10 }}>
           TAP TO ENABLE SOUND
         </div>
       )}

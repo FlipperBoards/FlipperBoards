@@ -29,8 +29,16 @@ BUILTIN_QUOTES = [
 _quote_idx = 0
 
 
-async def get_quote_matrix(rows: int, cols: int) -> list[list[int]]:
+async def get_quote_matrix(rows: int, cols: int, custom_quotes: str = "") -> list[list[int]]:
     global _quote_idx
+
+    # Use operator-supplied quotes when configured
+    if custom_quotes.strip():
+        pool = [q.strip() for q in custom_quotes.splitlines() if q.strip()]
+        if pool:
+            quote = pool[_quote_idx % len(pool)]
+            _quote_idx += 1
+            return text_to_matrix(quote.upper(), rows, cols)
 
     # Try external API first
     quote = await _fetch_quote()

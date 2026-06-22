@@ -1,33 +1,48 @@
 import React, { useState } from 'react'
 
 function ConfigField({ fieldKey, schema, value, onChange }) {
-  const cls = "bg-gray-900 text-white font-mono text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-blue-500 focus:outline-none w-full"
-
   if (schema.type === 'select') {
     return (
-      <div className="flex flex-col gap-1">
-        <label className="text-xs text-gray-400 font-mono">{schema.label}</label>
-        <select value={value ?? schema.default ?? ''} onChange={e => onChange(e.target.value)} className={cls}>
+      <div className="flex flex-col gap-1.5">
+        <label className="section-label">{schema.label}</label>
+        <select value={value ?? schema.default ?? ''} onChange={e => onChange(e.target.value)} className="fb-input">
           {(schema.options || []).map(opt => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        {schema.help && <p className="text-xs text-gray-600 font-mono">{schema.help}</p>}
+        {schema.help && <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>{schema.help}</p>}
+      </div>
+    )
+  }
+
+  if (schema.type === 'textarea') {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label className="section-label">{schema.label}</label>
+        <textarea
+          rows={4}
+          value={value ?? ''}
+          placeholder={schema.placeholder ?? ''}
+          onChange={e => onChange(e.target.value)}
+          className="fb-input"
+          style={{ resize: 'vertical', lineHeight: '1.5' }}
+        />
+        {schema.help && <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>{schema.help}</p>}
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-gray-400 font-mono">{schema.label}</label>
+    <div className="flex flex-col gap-1.5">
+      <label className="section-label">{schema.label}</label>
       <input
         type={schema.secret ? 'password' : schema.type === 'number' ? 'number' : 'text'}
         value={value ?? ''}
         placeholder={schema.placeholder ?? ''}
         onChange={e => onChange(e.target.value)}
-        className={cls}
+        className="fb-input"
       />
-      {schema.help && <p className="text-xs text-gray-600 font-mono">{schema.help}</p>}
+      {schema.help && <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>{schema.help}</p>}
     </div>
   )
 }
@@ -47,12 +62,7 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
     await fetch(`/api/modes/${mode}${qs}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode,
-        enabled: !currentEnabled,
-        sort_order: modeData.sort_order,
-        config: modeData.config || {},
-      }),
+      body: JSON.stringify({ mode, enabled: !currentEnabled, sort_order: modeData.sort_order, config: modeData.config || {} }),
     })
     setSaving(false)
     onUpdate()
@@ -71,50 +81,36 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
     await fetch(`/api/modes/${configuringMode}${qs}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode: configuringMode,
-        enabled: modeData.enabled,
-        sort_order: modeData.sort_order,
-        config: configDraft,
-      }),
+      body: JSON.stringify({ mode: configuringMode, enabled: modeData.enabled, sort_order: modeData.sort_order, config: configDraft }),
     })
     setConfigSaving(false)
     setConfiguringMode(null)
     onUpdate()
   }
 
-  const nextMode = async () => {
-    await fetch(`/api/display/next${qs}`, { method: 'POST' })
-  }
-
-  const blankDisplay = async () => {
-    await fetch(`/api/display/blank${qs}`, { method: 'POST' })
-  }
+  const nextMode    = () => fetch(`/api/display/next${qs}`,  { method: 'POST' })
+  const blankDisplay = () => fetch(`/api/display/blank${qs}`, { method: 'POST' })
 
   const configuringData = configuringMode ? modes.find(m => m.mode === configuringMode) : null
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-mono text-gray-200 font-semibold tracking-wider uppercase">
+        <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
           Display Modes
         </h2>
         <div className="flex gap-2">
-          <button
-            onClick={nextMode}
-            className="bg-gray-700 hover:bg-gray-600 text-white font-mono text-xs rounded-lg px-3 py-1.5 transition-colors"
-          >
-            NEXT →
+          <button onClick={nextMode} className="fb-btn-ghost text-[11px] px-3 py-1.5">
+            Next →
           </button>
-          <button
-            onClick={blankDisplay}
-            className="bg-gray-700 hover:bg-gray-600 text-gray-400 font-mono text-xs rounded-lg px-3 py-1.5 transition-colors"
-          >
-            BLANK
+          <button onClick={blankDisplay} className="fb-btn-ghost text-[11px] px-3 py-1.5" style={{ color: 'var(--text-3)' }}>
+            Blank
           </button>
         </div>
       </div>
 
+      {/* Mode grid */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {modes.map((m) => {
           const hasConfig = m.config_schema && Object.keys(m.config_schema).length > 0
@@ -124,54 +120,71 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
               key={m.mode}
               onClick={() => toggle(m.mode, m.enabled)}
               disabled={saving}
-              className={`
-                flex flex-col items-start gap-1 rounded-xl p-3 border transition-all text-left relative
-                ${m.enabled
-                  ? 'bg-blue-900/40 border-blue-600 shadow-lg shadow-blue-900/20'
-                  : 'bg-gray-800 border-gray-700 opacity-60 hover:opacity-80'
-                }
-                ${isConfiguring ? 'ring-2 ring-yellow-500/60' : ''}
-              `}
+              className="flex flex-col items-start gap-1.5 rounded-xl p-3 text-left transition-all"
+              style={{
+                background: m.enabled ? 'var(--accent-dim)' : 'var(--surface)',
+                border: `1px solid ${m.enabled ? 'var(--accent-border)' : 'var(--border)'}`,
+                boxShadow: m.enabled ? '0 0 16px var(--accent-glow)' : 'none',
+                opacity: m.enabled ? 1 : 0.65,
+                outline: isConfiguring ? '2px solid rgba(234,179,8,0.5)' : 'none',
+                outlineOffset: '2px',
+              }}
             >
               <div className="flex items-center gap-2 w-full">
-                <span className="text-xl">{m.icon ?? '⬡'}</span>
-                <span className="flex-1 font-mono text-sm text-gray-200 font-semibold">{m.label ?? m.mode}</span>
-                <div className="flex items-center gap-1">
+                <span className="text-lg leading-none">{m.icon ?? '⬡'}</span>
+                <span className="flex-1 text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>
+                  {m.label ?? m.mode}
+                </span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
                   {hasConfig && (
                     <span
                       role="button"
                       tabIndex={0}
-                      onClick={(e) => openConfig(e, m)}
-                      onKeyDown={(e) => e.key === 'Enter' && openConfig(e, m)}
-                      className={`w-5 h-5 flex items-center justify-center rounded transition-colors text-xs
-                        ${isConfiguring ? 'text-yellow-400' : 'text-gray-500 hover:text-gray-300'}`}
+                      onClick={e => openConfig(e, m)}
+                      onKeyDown={e => e.key === 'Enter' && openConfig(e, m)}
+                      className="w-4 h-4 flex items-center justify-center rounded text-[10px] transition-colors"
+                      style={{ color: isConfiguring ? '#eab308' : 'var(--text-3)' }}
                       title="Configure"
                     >
                       ⚙
                     </span>
                   )}
-                  <div className={`w-2 h-2 rounded-full ${m.enabled ? 'bg-blue-400' : 'bg-gray-600'}`} />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    style={{ background: m.enabled ? 'var(--accent)' : 'var(--text-3)' }}
+                  />
                 </div>
               </div>
-              <span className="text-xs text-gray-500 font-mono pl-8">{m.description ?? ''}</span>
+              {m.description && (
+                <span className="text-[10px] leading-tight pl-7" style={{ color: 'var(--text-3)' }}>
+                  {m.description}
+                </span>
+              )}
             </button>
           )
         })}
       </div>
 
       {/* Inline config panel */}
-      {configuringData && configuringData.config_schema && (
-        <div className="bg-gray-800 border border-yellow-600/40 rounded-xl p-4 space-y-4">
+      {configuringData?.config_schema && (
+        <div
+          className="rounded-xl p-4 space-y-4"
+          style={{
+            background: 'rgba(234,179,8,0.05)',
+            border: '1px solid rgba(234,179,8,0.25)',
+          }}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-base">{configuringData.icon}</span>
-              <span className="font-mono text-sm text-gray-200 font-semibold">
-                {configuringData.label} — Configuration
+              <span className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>
+                {configuringData.label} — Config
               </span>
             </div>
             <button
               onClick={() => setConfiguringMode(null)}
-              className="text-gray-500 hover:text-gray-300 font-mono text-lg leading-none"
+              className="text-lg leading-none transition-colors"
+              style={{ color: 'var(--text-3)' }}
             >
               ×
             </button>
@@ -184,7 +197,7 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
                 fieldKey={key}
                 schema={schema}
                 value={configDraft[key]}
-                onChange={(val) => setConfigDraft(prev => ({ ...prev, [key]: val }))}
+                onChange={val => setConfigDraft(prev => ({ ...prev, [key]: val }))}
               />
             ))}
           </div>
@@ -193,15 +206,13 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
             <button
               onClick={saveConfig}
               disabled={configSaving}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-mono text-sm rounded-xl py-2.5 font-semibold tracking-wider transition-colors"
+              className="fb-btn-primary flex-1"
+              style={{ background: '#854d0e', borderColor: 'rgba(234,179,8,0.3)' }}
             >
-              {configSaving ? 'SAVING…' : 'SAVE CONFIG'}
+              {configSaving ? 'Saving…' : 'Save Config'}
             </button>
-            <button
-              onClick={() => setConfiguringMode(null)}
-              className="bg-gray-700 hover:bg-gray-600 text-gray-300 font-mono text-sm rounded-xl px-4 transition-colors"
-            >
-              CANCEL
+            <button onClick={() => setConfiguringMode(null)} className="fb-btn-ghost px-4">
+              Cancel
             </button>
           </div>
         </div>

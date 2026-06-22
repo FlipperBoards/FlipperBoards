@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import {
   imageToMatrix,
   imageToColorMatrix,
@@ -7,42 +7,42 @@ import {
 } from '../../utils/imageToMatrix'
 
 const MODES = [
-  {
-    id: 'photo',
-    label: 'Photo Split',
-    desc: 'Real photo divided across tiles — each shows its literal section, like a puzzle',
-    badge: 'puzzle',
-  },
-  {
-    id: 'full',
-    label: 'Full Color',
-    desc: 'Every tile gets its exact pixel color — true photo mosaic',
-    badge: '16M colors',
-  },
-  {
-    id: 'color',
-    label: '8-Color Mosaic',
-    desc: 'Nearest Vestaboard color per tile — bold, graphic look',
-    badge: '8 colors',
-  },
-  {
-    id: 'mono',
-    label: 'Monochrome',
-    desc: 'Brightness mapped to character density — ASCII art aesthetic',
-    badge: 'chars',
-  },
+  { id: 'photo', label: 'Photo Split',   desc: 'Full photo divided across tiles — like a puzzle', badge: 'puzzle' },
+  { id: 'full',  label: 'Full Color',    desc: 'True photo mosaic — one pixel color per tile',    badge: '16M colors' },
+  { id: 'color', label: '8-Color Mosaic', desc: 'Nearest Vestaboard color per tile',              badge: '8 colors' },
+  { id: 'mono',  label: 'Monochrome',    desc: 'Brightness → character density (ASCII art)',       badge: 'chars' },
 ]
 
 export default function ImageUpload({ rows, cols, screenId = 'main' }) {
   const [mode, setMode] = useState('photo')
   const [preview, setPreview] = useState(null)
-  const [pending, setPending] = useState(null)   // { type: 'photo'|'color'|'matrix', data }
+  const [pending, setPending] = useState(null)   // {type, data, libraryId?}
   const [processing, setProcessing] = useState(false)
   const [pushed, setPushed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+
+  // Name / folder for the current pending image
+  const [nameInput, setNameInput] = useState('')
+  const [folderInput, setFolderInput] = useState('')
+
+  // Library
+  const [library, setLibrary] = useState([])
+  const [activeFolder, setActiveFolder] = useState('_all')
+  const [editingId, setEditingId] = useState(null)
+  const [editName, setEditName] = useState('')
+
   const fileRef = useRef(null)
   const lastFileRef = useRef(null)
   const previewBlobRef = useRef(null)
+
+  const loadLibrary = useCallback(async () => {
+    try {
+      const res = await fetch('/api/uploads')
+      if (res.ok) setLibrary(await res.json())
+    } catch { /* silent */ }
+  }, [])
+
+  useEffect(() => { loadLibrary() }, [loadLibrary])
 
   const process = useCallback(async (file, selectedMode) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -50,8 +50,8 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     setPreview(null)
     setPending(null)
     setPushed(false)
+    setNameInput(file.name ? file.name.replace(/\.[^.]+$/, '') : '')
 
-    // Release previous blob URL to avoid memory leaks
     if (previewBlobRef.current) {
       URL.revokeObjectURL(previewBlobRef.current)
       previewBlobRef.current = null
@@ -90,14 +90,67 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     if (lastFileRef.current) process(lastFileRef.current, newMode)
   }
 
+  // Use a library image — photo mode uses push-by-id; other modes re-download and process
+  const useFromLibrary = async (item) => {
+    setPushed(false)
+    if (mode === 'photo') {
+      setPreview(item.url)
+      setNameInput(item.name || '')
+      setFolderInput(item.folder || '')
+      setPending({ type: 'photo', data: null, libraryId: item.id })
+      lastFileRef.current = null
+    } else {
+      setProcessing(true)
+      try {
+        const res = await fetch(item.url)
+        const blob = await res.blob()
+        const file = new File([blob], item.name || 'image.jpg', { type: blob.type || 'image/jpeg' })
+        setNameInput(item.name || '')
+        setFolderInput(item.folder || '')
+        process(file, mode)
+      } catch {
+        setProcessing(false)
+      }
+    }
+  }
+
+  const deleteFromLibrary = async (item, e) => {
+    e.stopPropagation()
+    await fetch(`/api/uploads/${item.id}`, { method: 'DELETE' })
+    loadLibrary()
+  }
+
+  const startRename = (item, e) => {
+    e.stopPropagation()
+    setEditingId(item.id)
+    setEditName(item.name || '')
+  }
+
+  const commitRename = async (id) => {
+    await fetch(`/api/uploads/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: editName }),
+    })
+    setEditingId(null)
+    loadLibrary()
+  }
+
   const push = async () => {
     if (!pending) return
     const qs = `?screen=${encodeURIComponent(screenId)}`
 
     if (pending.type === 'photo') {
-      const fd = new FormData()
-      fd.append('file', pending.data)
-      await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
+      if (pending.libraryId) {
+        await fetch(`/api/display/photo/push/${pending.libraryId}${qs}`, { method: 'POST' })
+      } else {
+        const fd = new FormData()
+        fd.append('file', pending.data)
+        if (nameInput.trim()) fd.append('name', nameInput.trim())
+        if (folderInput.trim()) fd.append('folder', folderInput.trim())
+        await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
+        loadLibrary()
+      }
     } else if (pending.type === 'color') {
       await fetch(`/api/display/color-matrix${qs}`, {
         method: 'POST',
@@ -115,40 +168,53 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
     setTimeout(() => setPushed(false), 3000)
   }
 
+  // Derived library state
+  const folders = [...new Set(library.map(i => i.folder).filter(Boolean))].sort()
+  const visibleLibrary = activeFolder === '_all'
+    ? library
+    : library.filter(i => i.folder === activeFolder)
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-mono text-gray-200 font-semibold tracking-wider uppercase">
+    <div className="space-y-5">
+      <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
         Image Push
       </h2>
-      <p className="text-xs text-gray-500 font-mono">
-        Upload any image and push it to the display immediately. Switching modes re-processes
-        the same image instantly.
-      </p>
 
       {/* Mode selector */}
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {MODES.map(m => (
           <button
             key={m.id}
             onClick={() => handleModeChange(m.id)}
-            className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 border text-left transition-all ${
-              mode === m.id
-                ? 'bg-blue-900/40 border-blue-600'
-                : 'bg-gray-800 border-gray-700 hover:border-gray-500 opacity-70 hover:opacity-100'
-            }`}
+            className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all"
+            style={{
+              background: mode === m.id ? 'var(--accent-dim)' : 'var(--surface)',
+              border: `1px solid ${mode === m.id ? 'var(--accent-border)' : 'var(--border)'}`,
+              opacity: mode === m.id ? 1 : 0.7,
+            }}
           >
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-sm text-gray-200 font-semibold">{m.label}</span>
-                <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${
-                  mode === m.id ? 'bg-blue-700 text-blue-200' : 'bg-gray-700 text-gray-400'
-                }`}>{m.badge}</span>
+                <span className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>{m.label}</span>
+                <span
+                  className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                  style={{
+                    background: mode === m.id ? 'rgba(59,130,246,0.2)' : 'var(--surface)',
+                    color: mode === m.id ? 'var(--accent)' : 'var(--text-3)',
+                  }}
+                >
+                  {m.badge}
+                </span>
               </div>
-              <span className="text-xs text-gray-500 font-mono">{m.desc}</span>
+              <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>{m.desc}</span>
             </div>
-            <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${
-              mode === m.id ? 'border-blue-400 bg-blue-400' : 'border-gray-600'
-            }`} />
+            <span
+              className="w-3 h-3 rounded-full border-2 flex-shrink-0 transition-all"
+              style={{
+                borderColor: mode === m.id ? 'var(--accent)' : 'var(--text-3)',
+                background: mode === m.id ? 'var(--accent)' : 'transparent',
+              }}
+            />
           </button>
         ))}
       </div>
@@ -157,23 +223,29 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
       <div
         onClick={() => fileRef.current?.click()}
         onDrop={handleDrop}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
         onDragLeave={() => setDragOver(false)}
-        className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
-          dragOver ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700 hover:border-gray-500 bg-gray-900/50'
-        }`}
+        className="relative rounded-xl p-8 text-center cursor-pointer transition-all"
+        style={{
+          border: `2px dashed ${dragOver ? 'var(--accent)' : 'var(--border)'}`,
+          background: dragOver ? 'var(--accent-dim)' : 'rgba(0,0,0,0.2)',
+        }}
       >
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleInputChange} />
         {processing ? (
-          <div className="text-gray-400 font-mono text-sm animate-pulse">PROCESSING...</div>
+          <div className="text-sm font-mono animate-pulse" style={{ color: 'var(--text-2)' }}>
+            Processing…
+          </div>
         ) : (
           <>
-            <div className="text-4xl mb-2">🖼️</div>
-            <div className="text-gray-400 font-mono text-sm">DROP IMAGE or CLICK TO BROWSE</div>
-            <div className="text-gray-600 font-mono text-xs mt-1">
+            <div className="text-3xl mb-2 opacity-60">🖼️</div>
+            <div className="text-xs font-mono font-medium" style={{ color: 'var(--text-2)' }}>
+              Drop image or click to browse
+            </div>
+            <div className="text-[11px] font-mono mt-1" style={{ color: 'var(--text-3)' }}>
               {mode === 'photo'
-                ? `Will be divided across ${cols}×${rows} tiles`
-                : `Will be sampled at ${cols}×${rows} tiles`}
+                ? `Divided across ${cols}×${rows} tiles`
+                : `Sampled at ${cols}×${rows} tiles`}
             </div>
           </>
         )}
@@ -183,62 +255,186 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
       {preview && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-xs text-gray-500 font-mono uppercase tracking-wider">
-              Preview — {cols}×{rows} tiles
-            </div>
-            <div className="text-xs text-gray-600 font-mono">
+            <p className="section-label">Preview — {cols}×{rows}</p>
+            <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>
               {MODES.find(m => m.id === mode)?.label}
-            </div>
+            </span>
           </div>
 
-          {/* Preview image — with tile grid overlay for photo split mode */}
-          <div className="overflow-hidden rounded-lg border border-gray-700 bg-black relative">
+          <div
+            className="overflow-hidden rounded-xl relative"
+            style={{ border: '1px solid var(--border)', background: '#000' }}
+          >
             <img
               src={preview}
               alt="Tile preview"
-              className="w-full"
-              style={{ imageRendering: mode === 'photo' ? 'auto' : 'pixelated', display: 'block' }}
+              className="w-full block"
+              style={{ imageRendering: mode === 'photo' ? 'auto' : 'pixelated' }}
             />
             {mode === 'photo' && (
               <div
                 className="absolute inset-0 pointer-events-none"
                 style={{
                   backgroundImage: `
-                    repeating-linear-gradient(to right, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 1px, transparent 1px, transparent calc(100% / ${cols})),
-                    repeating-linear-gradient(to bottom, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 1px, transparent 1px, transparent calc(100% / ${rows}))
+                    repeating-linear-gradient(to right, rgba(0,0,0,0.3) 0px, rgba(0,0,0,0.3) 1px, transparent 1px, transparent calc(100% / ${cols})),
+                    repeating-linear-gradient(to bottom, rgba(0,0,0,0.3) 0px, rgba(0,0,0,0.3) 1px, transparent 1px, transparent calc(100% / ${rows}))
                   `,
                 }}
               />
             )}
           </div>
 
+          {/* Name + folder (photo mode only — saved to library) */}
+          {mode === 'photo' && !pending?.libraryId && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="section-label">Name</label>
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  placeholder="Optional label"
+                  className="fb-input"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="section-label">Folder</label>
+                <input
+                  type="text"
+                  list="folder-suggestions"
+                  value={folderInput}
+                  onChange={e => setFolderInput(e.target.value)}
+                  placeholder="e.g. Logos"
+                  className="fb-input"
+                />
+                <datalist id="folder-suggestions">
+                  {folders.map(f => <option key={f} value={f} />)}
+                </datalist>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={push}
-              className={`flex-1 font-mono text-sm rounded-xl py-3 transition-colors font-semibold tracking-wider ${
-                pushed ? 'bg-green-700 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}
+              className="fb-btn-primary flex-1 py-3"
+              style={pushed ? { background: '#16a34a' } : {}}
             >
-              {pushed ? '✓ SENT TO DISPLAY' : 'PUSH TO DISPLAY'}
+              {pushed ? '✓ Sent to Display' : 'Push to Display'}
             </button>
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="bg-gray-700 hover:bg-gray-600 text-gray-300 font-mono text-sm rounded-xl px-4 transition-colors"
-            >
-              NEW
+            <button onClick={() => fileRef.current?.click()} className="fb-btn-ghost px-4">
+              New
             </button>
           </div>
         </div>
       )}
 
+      {/* Saved image library */}
+      {library.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="section-label">Saved Images</p>
+            <button
+              onClick={loadLibrary}
+              className="text-[11px] font-mono opacity-40 hover:opacity-80 transition-opacity"
+              style={{ color: 'var(--text-2)' }}
+            >
+              refresh
+            </button>
+          </div>
+
+          {/* Folder tabs */}
+          {folders.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {['_all', ...folders].map(f => (
+                <button
+                  key={f}
+                  onClick={() => setActiveFolder(f)}
+                  className="text-[10px] font-mono px-2.5 py-1 rounded-lg transition-all"
+                  style={{
+                    background: activeFolder === f ? 'var(--accent-dim)' : 'var(--surface)',
+                    border: `1px solid ${activeFolder === f ? 'var(--accent-border)' : 'var(--border)'}`,
+                    color: activeFolder === f ? 'var(--accent)' : 'var(--text-3)',
+                  }}
+                >
+                  {f === '_all' ? 'All' : f}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Thumbnail grid */}
+          <div
+            className="rounded-xl p-3 overflow-y-auto"
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', maxHeight: 280 }}
+          >
+            <div className="grid grid-cols-4 gap-2">
+              {visibleLibrary.map(item => (
+                <div key={item.id} className="flex flex-col gap-1">
+                  {/* Thumbnail */}
+                  <div
+                    onClick={() => useFromLibrary(item)}
+                    className="relative rounded-lg overflow-hidden cursor-pointer group"
+                    style={{ aspectRatio: '1', background: '#000' }}
+                  >
+                    <img src={item.url} alt={item.name || 'image'} className="w-full h-full object-cover" />
+                    {/* Hover overlay */}
+                    <div
+                      className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                      style={{ background: 'rgba(59,130,246,0.35)' }}
+                    >
+                      <span className="text-[10px] font-mono font-bold text-white">USE</span>
+                    </div>
+                    {/* Delete */}
+                    <button
+                      onClick={(e) => deleteFromLibrary(item, e)}
+                      className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"
+                      style={{ background: 'rgba(220,38,38,0.9)', fontSize: 10, lineHeight: 1 }}
+                      title="Delete"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  {/* Inline rename */}
+                  {editingId === item.id ? (
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      onBlur={() => commitRename(item.id)}
+                      onKeyDown={e => { if (e.key === 'Enter') commitRename(item.id); if (e.key === 'Escape') setEditingId(null) }}
+                      className="fb-input"
+                      style={{ fontSize: 9, padding: '2px 4px' }}
+                    />
+                  ) : (
+                    <button
+                      onClick={(e) => startRename(item, e)}
+                      className="text-left truncate text-[9px] font-mono opacity-50 hover:opacity-100 transition-opacity"
+                      style={{ color: 'var(--text-2)' }}
+                      title="Click to rename"
+                    >
+                      {item.name || 'Unnamed'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tips */}
-      <div className="bg-gray-900 rounded-lg p-3 space-y-1.5">
-        <div className="text-xs text-gray-600 font-mono uppercase tracking-wider mb-2">Tips</div>
-        <div className="text-xs text-gray-500 font-mono">· Photo Split: actual photo divided across tiles — great for logos &amp; artwork on Zoom backgrounds</div>
-        <div className="text-xs text-gray-500 font-mono">· Full Color: exact RGB per tile — best for photos and artwork</div>
-        <div className="text-xs text-gray-500 font-mono">· 8-Color: bold graphic look, great for logos and icons</div>
-        <div className="text-xs text-gray-500 font-mono">· Mono: high-contrast images work best, like faces or silhouettes</div>
-        <div className="text-xs text-gray-500 font-mono">· Use the Playlist tab to build a queue of photos that rotate automatically</div>
+      <div
+        className="rounded-xl p-4 space-y-1.5"
+        style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+      >
+        <p className="section-label mb-2">Tips</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Photo Split: great for logos &amp; artwork on Zoom backgrounds</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Full Color: exact RGB per tile — best for photos</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· 8-Color: bold graphic look, great for icons</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Mono: high-contrast images work best (faces, silhouettes)</p>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>· Use the Queue tab to build a rotating photo playlist</p>
       </div>
     </div>
   )
