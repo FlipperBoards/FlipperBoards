@@ -596,6 +596,16 @@ async def delete_image(image_id: int, org_id: int = DEFAULT_ORG_ID) -> str | Non
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"}
 
+async def remove_playlist_items_by_image_url(image_url: str, org_id: int = DEFAULT_ORG_ID):
+    """Delete playlist items whose content JSON contains the given image URL."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM playlist_items WHERE org_id=? AND content LIKE ?",
+            (org_id, f'%{image_url}%'),
+        )
+        await db.commit()
+
+
 async def migrate_existing_uploads(upload_dir: str, org_id: int = DEFAULT_ORG_ID):
     """One-time: register files already on disk that have no DB record yet."""
     import os, mimetypes

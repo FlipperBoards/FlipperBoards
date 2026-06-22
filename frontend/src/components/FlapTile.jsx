@@ -76,10 +76,11 @@ export default function FlapTile({
     animTimers.current.forEach(clearTimeout)
     animTimers.current = []
 
-    // Cap so the full animation (stagger delay + steps) settles before the next 1s clock tick
+    // Cap so the full animation (stagger delay + steps) settles before the next 1s clock tick.
+    // Allow 0 intermediates when budget is tight — still shows fold+rise for the final char.
     const stepMs = flipDurationRef.current
-    const budget = Math.max(50, 900 - delayRef.current)
-    const maxIntermediates = Math.max(1, Math.floor(budget / (stepMs + 10)) - 1)
+    const budget = 900 - delayRef.current
+    const maxIntermediates = Math.max(0, Math.floor(budget / (stepMs + 10)) - 1)
     const intermediates = getIntermediateChars(fromCode, code, maxIntermediates)
     const sequence = [...intermediates, code]
 

@@ -721,6 +721,8 @@ async def delete_upload(image_id: int):
     path = os.path.join(UPLOAD_DIR, filename)
     if os.path.isfile(path):
         os.remove(path)
+    # Remove playlist items that reference this image so queue entries don't 404
+    await database.remove_playlist_items_by_image_url(f"/api/uploads/{image_id}/image")
     return {"status": "deleted"}
 
 
