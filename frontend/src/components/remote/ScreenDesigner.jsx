@@ -1,5 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { CHARS, COLOR_HEX, COLOR_NAMES, isColorCode, codeToChar } from '../../utils/charmap'
+import { renderIconToTiles } from '../../utils/iconStamp'
+import { ICON_CATEGORIES, ALL_ICONS } from '../../data/icons'
+import * as FaSolid from '@fortawesome/free-solid-svg-icons'
+import { library } from '@fortawesome/fontawesome-svg-core'
+
+// Register all solid icons once
+library.add(...Object.values(FaSolid).filter(v => v && v.prefix === 'fas'))
 
 // ── Character categories ──────────────────────────────────────────────────────
 
@@ -51,6 +58,21 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
   const [pushDuration, setPushDuration] = useState('')
   const [queueDurations, setQueueDurations] = useState({})   // keyed by design id
 
+  // ── Icon stamp state ──────────────────────────────────────────────────────────
+  const [stampSearch, setStampSearch]         = useState('')
+  const [stampIconName, setStampIconName]     = useState(null)   // importName string
+  const [stampIconCat, setStampIconCat]       = useState(ICON_CATEGORIES[0].id)
+  const [stampFgCode, setStampFgCode]         = useState(77)     // white
+  const [stampBgCode, setStampBgCode]         = useState(0)      // space
+  const [stampOriginX, setStampOriginX]       = useState(0)
+  const [stampOriginY, setStampOriginY]       = useState(0)
+  const [stampWidth, setStampWidth]           = useState(cols)
+  const [stampHeight, setStampHeight]         = useState(rows)
+  const [stampFitBoard, setStampFitBoard]     = useState(true)
+  const [stampApplying, setStampApplying]     = useState(false)
+  const [stampFeedback, setStampFeedback]     = useState('')
+  const [stampThreshold, setStampThreshold]   = useState(80)
+
   const isPainting = useRef(false)
   const qs = `?screen=${encodeURIComponent(screenId)}`
 
@@ -91,6 +113,52 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
 
   const fillAll   = () => setMatrix(Array.from({length: rows}, () => Array(cols).fill(activeCode)))
   const clearAll  = () => setMatrix(blankMatrix())
+
+  // ── Icon stamp ──────────────────────────────────────────────────────────────
+
+  const stampFilteredIcons = useMemo(() => {
+    if (stampSearch.trim()) {
+      const q = stampSearch.toLowerCase()
+      return ALL_ICONS.filter(i =>
+        i.label.toLowerCase().includes(q) || i.id.includes(q)
+      )
+    }
+    const cat = ICON_CATEGORIES.find(c => c.id === stampIconCat)
+    return cat ? cat.icons : []
+  }, [stampSearch, stampIconCat])
+
+  const applyStamp = useCallback(async () => {
+    if (!stampIconName) return
+    const iconDef = FaSolid[stampIconName]
+    if (!iconDef) return
+    setStampApplying(true)
+    setStampFeedback('')
+    try {
+      const sw = stampFitBoard ? cols : Math.min(stampWidth, cols - stampOriginX)
+      const sh = stampFitBoard ? rows : Math.min(stampHeight, rows - stampOriginY)
+      const ox = stampFitBoard ? 0 : Math.max(0, stampOriginX)
+      const oy = stampFitBoard ? 0 : Math.max(0, stampOriginY)
+      const stamp = await renderIconToTiles(iconDef, sw, sh, stampFgCode, stampBgCode, stampThreshold)
+      setMatrix(prev => {
+        const next = prev.map(row => [...row])
+        for (let r = 0; r < sh; r++) {
+          for (let c = 0; c < sw; c++) {
+            if (oy + r < rows && ox + c < cols) {
+              next[oy + r][ox + c] = stamp[r][c]
+            }
+          }
+        }
+        return next
+      })
+      setStampFeedback('applied')
+      setTimeout(() => setStampFeedback(''), 2000)
+    } catch (err) {
+      setStampFeedback('error')
+      setTimeout(() => setStampFeedback(''), 2000)
+    } finally {
+      setStampApplying(false)
+    }
+  }, [stampIconName, stampFgCode, stampBgCode, stampFitBoard, stampWidth, stampHeight, stampOriginX, stampOriginY, stampThreshold, cols, rows])
 
   // ── Push now ────────────────────────────────────────────────────────────────
 
@@ -300,6 +368,213 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
               Clear
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* ── Icon Stamp ── */}
+      <div
+        className="rounded-xl overflow-hidden"
+        style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}
+      >
+        <div className="px-3 pt-3 pb-2 flex items-center gap-2">
+          <p className="section-label flex-1">Icon Stamp</p>
+          <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>FA Free</span>
+        </div>
+
+        {/* Search + category tabs */}
+        <div className="px-3 pb-2">
+          <input
+            type="text"
+            value={stampSearch}
+            onChange={e => setStampSearch(e.target.value)}
+            placeholder="Search icons…"
+            className="fb-input w-full text-[11px]"
+          />
+        </div>
+
+        {!stampSearch.trim() && (
+          <div className="flex overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+            {ICON_CATEGORIES.map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => setStampIconCat(cat.id)}
+                className="flex-shrink-0 text-[9px] font-mono px-2.5 py-1.5 whitespace-nowrap transition-colors"
+                style={{
+                  color: stampIconCat === cat.id ? 'var(--accent)' : 'var(--text-3)',
+                  background: stampIconCat === cat.id ? 'var(--accent-dim)' : 'transparent',
+                  borderBottom: stampIconCat === cat.id ? '2px solid var(--accent)' : '2px solid transparent',
+                }}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Icon grid */}
+        <div className="p-2 flex flex-wrap gap-1 max-h-40 overflow-y-auto">
+          {stampFilteredIcons.map(icon => {
+            const iconDef = FaSolid[icon.importName]
+            const isSelected = stampIconName === icon.importName
+            const svgData = iconDef?.icon
+            const path = svgData ? (Array.isArray(svgData[4]) ? svgData[4].join(' ') : svgData[4]) : null
+            const vw = svgData ? svgData[0] : 512
+            const vh = svgData ? svgData[1] : 512
+            return (
+              <button
+                key={icon.id}
+                onClick={() => setStampIconName(icon.importName)}
+                title={icon.label}
+                className="rounded flex flex-col items-center justify-center gap-0.5 transition-all"
+                style={{
+                  width: 40, height: 44,
+                  background: isSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
+                  border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                  boxShadow: isSelected ? '0 0 0 2px var(--accent-glow)' : 'none',
+                  flexShrink: 0,
+                  padding: '4px 4px 2px',
+                }}
+              >
+                {path ? (
+                  <svg viewBox={`0 0 ${vw} ${vh}`} width="18" height="18" fill={isSelected ? '#fff' : 'var(--text-2)'}>
+                    <path d={path} />
+                  </svg>
+                ) : (
+                  <span style={{ fontSize: 10, color: 'var(--text-3)' }}>?</span>
+                )}
+                <span style={{ fontSize: '7px', color: isSelected ? '#fff' : 'var(--text-3)', lineHeight: 1, maxWidth: 36, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {icon.label}
+                </span>
+              </button>
+            )
+          })}
+          {stampFilteredIcons.length === 0 && (
+            <span className="text-[11px] px-2 py-2" style={{ color: 'var(--text-3)' }}>No icons found</span>
+          )}
+        </div>
+
+        {/* Stamp settings */}
+        <div className="px-3 pb-3 space-y-2.5">
+          {/* Foreground / background color */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)', whiteSpace: 'nowrap' }}>Icon color:</span>
+            <div className="flex gap-1">
+              {Array.from({length: 7}, (_, i) => i + 71).map(code => (
+                <button
+                  key={code}
+                  onClick={() => setStampFgCode(code)}
+                  title={COLOR_NAMES[code]}
+                  style={{
+                    width: 20, height: 20, borderRadius: 4,
+                    background: COLOR_HEX[code],
+                    border: stampFgCode === code ? '2px solid #fff' : '2px solid transparent',
+                    boxShadow: stampFgCode === code ? '0 0 0 2px var(--accent)' : 'none',
+                    flexShrink: 0,
+                  }}
+                />
+              ))}
+              <button
+                onClick={() => setStampFgCode(0)}
+                title="Space"
+                style={{
+                  width: 20, height: 20, borderRadius: 4,
+                  background: '#0d0d1a',
+                  border: stampFgCode === 0 ? '2px solid #fff' : '1px solid var(--border)',
+                  boxShadow: stampFgCode === 0 ? '0 0 0 2px var(--accent)' : 'none',
+                  flexShrink: 0,
+                }}
+              />
+            </div>
+            <span className="text-[10px] font-mono ml-2" style={{ color: 'var(--text-3)', whiteSpace: 'nowrap' }}>BG:</span>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setStampBgCode(0)}
+                title="Space (transparent)"
+                style={{
+                  width: 20, height: 20, borderRadius: 4,
+                  background: '#0d0d1a',
+                  border: stampBgCode === 0 ? '2px solid #fff' : '1px solid var(--border)',
+                  boxShadow: stampBgCode === 0 ? '0 0 0 2px var(--accent)' : 'none',
+                  flexShrink: 0,
+                }}
+              />
+              {Array.from({length: 7}, (_, i) => i + 71).map(code => (
+                <button
+                  key={code}
+                  onClick={() => setStampBgCode(code)}
+                  title={COLOR_NAMES[code]}
+                  style={{
+                    width: 20, height: 20, borderRadius: 4,
+                    background: COLOR_HEX[code],
+                    border: stampBgCode === code ? '2px solid #fff' : '2px solid transparent',
+                    boxShadow: stampBgCode === code ? '0 0 0 2px var(--accent)' : 'none',
+                    flexShrink: 0,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Region */}
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={stampFitBoard}
+                onChange={e => setStampFitBoard(e.target.checked)}
+                className="accent-blue-500"
+              />
+              <span className="text-[10px] font-mono" style={{ color: 'var(--text-2)' }}>Fit full board</span>
+            </label>
+          </div>
+          {!stampFitBoard && (
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { label: 'X', val: stampOriginX, set: v => setStampOriginX(Math.max(0, Math.min(v, cols - 1))) },
+                { label: 'Y', val: stampOriginY, set: v => setStampOriginY(Math.max(0, Math.min(v, rows - 1))) },
+                { label: 'W', val: stampWidth,   set: v => setStampWidth(Math.max(1, Math.min(v, cols))) },
+                { label: 'H', val: stampHeight,  set: v => setStampHeight(Math.max(1, Math.min(v, rows))) },
+              ].map(({ label, val, set }) => (
+                <div key={label} className="flex flex-col items-center gap-0.5">
+                  <span className="text-[9px] font-mono" style={{ color: 'var(--text-3)' }}>{label}</span>
+                  <input
+                    type="number"
+                    min={label === 'W' || label === 'H' ? 1 : 0}
+                    max={label === 'W' || label === 'X' ? cols : rows}
+                    value={val}
+                    onChange={e => set(parseInt(e.target.value, 10) || 0)}
+                    className="fb-input text-center text-[11px] py-1"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Threshold */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono whitespace-nowrap" style={{ color: 'var(--text-3)' }}>
+              Threshold: {stampThreshold}
+            </span>
+            <input
+              type="range"
+              min={10} max={220} step={5}
+              value={stampThreshold}
+              onChange={e => setStampThreshold(parseInt(e.target.value, 10))}
+              className="flex-1 accent-blue-500"
+              style={{ height: 4 }}
+            />
+          </div>
+
+          {/* Apply button */}
+          <button
+            onClick={applyStamp}
+            disabled={!stampIconName || stampApplying}
+            className="fb-btn-primary w-full text-[11px] py-2 disabled:opacity-40"
+            style={stampFeedback === 'applied' ? { background: '#16a34a' } : stampFeedback === 'error' ? { background: '#dc2626' } : {}}
+          >
+            {stampApplying ? 'Applying…' : stampFeedback === 'applied' ? '✓ Applied' : stampFeedback === 'error' ? '✗ Error' : stampIconName ? `Stamp "${ALL_ICONS.find(i => i.importName === stampIconName)?.label || stampIconName}"` : 'Select an icon above'}
+          </button>
         </div>
       </div>
 
