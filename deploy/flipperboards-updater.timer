@@ -1,0 +1,10 @@
+[Unit]
+Description=Check FlipperBoards GitHub for updates every minute
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+Unit=flipperboards-updater.service
+
+[Install]
+WantedBy=timers.target

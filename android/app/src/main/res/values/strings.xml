@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FlipperBoards</string>
+    <string name="config_button_desc">Open configuration</string>
+    <string name="label_server_url">Server URL</string>
+    <string name="hint_server_url">http://192.168.1.100:8000</string>
+    <string name="btn_fetch_screens">Fetch Screens</string>
+    <string name="label_screen">Screen</string>
+    <string name="label_sound">Flip Sound Effects</string>
+</resources>
