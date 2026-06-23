@@ -51,6 +51,7 @@ class ScreenState:
         self.mode: str = "clock"
         self.mode_idx: int = 0
         self.rotation_task: asyncio.Task | None = None
+        self.push_timer: asyncio.Task | None = None
 
 
 _screens: dict[str, ScreenState] = {}
@@ -379,12 +380,15 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 class DisplayContent(BaseModel):
     text: str
+    duration: Optional[int] = None   # seconds to show; None = until manually changed
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
+    duration: Optional[int] = None
 
 class ColorMatrixContent(BaseModel):
     color_matrix: list[list[str]]
+    duration: Optional[int] = None
 
 class SettingsUpdate(BaseModel):
     rotation_interval: Optional[int] = None
@@ -557,6 +561,21 @@ async def _screens_payload():
     ]
 
 
+def _schedule_revert(state: ScreenState, screen_id: str, duration: Optional[int]) -> None:
+    """Cancel any existing push timer. If duration > 0, advance mode after N seconds."""
+    if state.push_timer and not state.push_timer.done():
+        state.push_timer.cancel()
+    state.push_timer = None
+    if duration is not None and duration > 0:
+        async def _revert():
+            try:
+                await asyncio.sleep(duration)
+                await advance_screen_mode(screen_id)
+            except asyncio.CancelledError:
+                pass
+        state.push_timer = asyncio.create_task(_revert())
+
+
 # ── Display control (immediate push) ─────────────────────────────────────────
 
 @app.get("/api/state")
@@ -582,6 +601,7 @@ async def push_text(content: DisplayContent, screen: str = Query(default="main")
     state.color_matrix = None
     state.photo_url = None
     state.mode = "text_push"
+    _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -597,6 +617,7 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state.color_matrix = None
     state.photo_url = None
     state.mode = "matrix_push"
+    _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -611,6 +632,7 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
     state.rows = len(content.color_matrix)
     state.cols = len(content.color_matrix[0]) if content.color_matrix else state.cols
     state.mode = "image_push"
+    _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -620,6 +642,7 @@ async def push_photo(
     file: UploadFile = File(...),
     name: str = Form(default=''),
     folder: str = Form(default=''),
+    duration: Optional[int] = Form(default=None),
     screen: str = Query(default="main"),
 ):
     state = get_screen_state(screen)
@@ -628,12 +651,13 @@ async def push_photo(
     state.photo_url = img['url']
     state.color_matrix = None
     state.mode = "photo_push"
+    _schedule_revert(state, screen, duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen, **img}
 
 
 @app.post("/api/display/photo/push/{image_id}")
-async def push_library_photo(image_id: int, screen: str = Query(default="main")):
+async def push_library_photo(image_id: int, screen: str = Query(default="main"), duration: Optional[int] = Query(default=None)):
     """Push an already-uploaded library image to the display without re-uploading."""
     img = await database.get_image(image_id)
     if not img:
@@ -645,6 +669,7 @@ async def push_library_photo(image_id: int, screen: str = Query(default="main"))
     state.photo_url = f"/api/uploads/{image_id}/image"
     state.color_matrix = None
     state.mode = "photo_push"
+    _schedule_revert(state, screen, duration)
     await _broadcast_screen(state)
     return {"status": "ok", "image_url": state.photo_url}
 

@@ -1,4 +1,58 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
+
+function DurationPicker({ value, onChange }) {
+  const presets = [
+    { label: 'Until changed', v: '' },
+    { label: '10s',   v: '10' },
+    { label: '30s',   v: '30' },
+    { label: '1 min', v: '60' },
+    { label: '5 min', v: '300' },
+  ]
+  const isPreset = presets.some(p => p.v === value)
+  const [custom, setCustom] = useState(false)
+
+  const handleSelect = v => {
+    if (v === '__custom__') { setCustom(true); onChange('60') }
+    else { setCustom(false); onChange(v) }
+  }
+
+  if (custom || (!isPreset && value !== '')) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <label className="section-label whitespace-nowrap">Display for</label>
+        <input
+          type="number" min={1} max={86400}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className="w-16 text-center fb-input py-1"
+        />
+        <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>sec</span>
+        <button
+          type="button"
+          onClick={() => { setCustom(false); onChange('') }}
+          className="text-[10px] font-mono opacity-50 hover:opacity-100"
+          style={{ color: 'var(--text-3)' }}
+        >
+          ×
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <label className="section-label whitespace-nowrap">Display for</label>
+      <select
+        value={value}
+        onChange={e => handleSelect(e.target.value)}
+        className="fb-input py-1 text-[11px]"
+      >
+        {presets.map(p => <option key={p.v} value={p.v}>{p.label}</option>)}
+        <option value="__custom__">Custom…</option>
+      </select>
+    </div>
+  )
+}
 import {
   imageToMatrix,
   imageToColorMatrix,
@@ -24,6 +78,7 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
   // Name / folder for the current pending image
   const [nameInput, setNameInput] = useState('')
   const [folderInput, setFolderInput] = useState('')
+  const [pushDuration, setPushDuration] = useState('')   // '' = until changed
 
   // Library
   const [library, setLibrary] = useState([])
@@ -139,15 +194,18 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
   const push = async () => {
     if (!pending) return
     const qs = `?screen=${encodeURIComponent(screenId)}`
+    const dur = pushDuration !== '' ? parseInt(pushDuration, 10) : null
 
     if (pending.type === 'photo') {
       if (pending.libraryId) {
-        await fetch(`/api/display/photo/push/${pending.libraryId}${qs}`, { method: 'POST' })
+        const durQs = dur !== null ? `&duration=${dur}` : ''
+        await fetch(`/api/display/photo/push/${pending.libraryId}${qs}${durQs}`, { method: 'POST' })
       } else {
         const fd = new FormData()
         fd.append('file', pending.data)
         if (nameInput.trim()) fd.append('name', nameInput.trim())
         if (folderInput.trim()) fd.append('folder', folderInput.trim())
+        if (dur !== null) fd.append('duration', String(dur))
         await fetch(`/api/display/photo${qs}`, { method: 'POST', body: fd })
         loadLibrary()
       }
@@ -155,13 +213,13 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
       await fetch(`/api/display/color-matrix${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ color_matrix: pending.data }),
+        body: JSON.stringify({ color_matrix: pending.data, duration: dur }),
       })
     } else {
       await fetch(`/api/display/matrix${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matrix: pending.data }),
+        body: JSON.stringify({ matrix: pending.data, duration: dur }),
       })
     }
     setPushed(true)
@@ -313,6 +371,10 @@ export default function ImageUpload({ rows, cols, screenId = 'main' }) {
               </div>
             </div>
           )}
+
+          <div className="flex items-center justify-between gap-2 pb-1">
+            <DurationPicker value={pushDuration} onChange={setPushDuration} />
+          </div>
 
           <div className="flex gap-2">
             <button
