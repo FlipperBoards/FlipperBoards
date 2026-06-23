@@ -30,7 +30,8 @@ def get_org_id() -> int:
 
 # ── Upload directory ──────────────────────────────────────────────────────────
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+_upload_setting = settings.upload_dir
+UPLOAD_DIR = _upload_setting if os.path.isabs(_upload_setting) else os.path.join(os.path.dirname(__file__), _upload_setting)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 

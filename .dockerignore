@@ -1,0 +1,14 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.env
+**/.git
+**/.DS_Store
+frontend/node_modules
+frontend/dist
+backend/uploads
+android
+deploy
+References
+*.md
+!README.md

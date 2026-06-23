@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     db_path: str = "flipperboards.db"
+    upload_dir: str = "uploads"
 
     # Default display dimensions
     default_rows: int = 6
