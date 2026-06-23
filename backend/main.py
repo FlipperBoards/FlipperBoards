@@ -180,6 +180,10 @@ async def _render_playlist_item(state: ScreenState):
         state.mode = "image_push"
         state.color_matrix = content.get("color_matrix")
 
+    elif item_type == "matrix":
+        state.mode = "matrix_push"
+        state.matrix = content.get("matrix", blank_matrix(state.rows, state.cols))
+
     await _broadcast_screen(state)
 
 
@@ -449,6 +453,17 @@ class PlaylistItemUpdate(BaseModel):
 
 class PlaylistReorder(BaseModel):
     ids: list[int]
+
+class DesignCreate(BaseModel):
+    name: str
+    matrix: list[list[int]]
+
+class DesignUpdate(BaseModel):
+    name: str
+    matrix: list[list[int]]
+
+class DesignQueueAdd(BaseModel):
+    duration: int = 30
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -816,6 +831,60 @@ async def play_playlist(screen: str = Query(default="main")):
     _stop_screen_rotation(screen)
     _start_screen_rotation(screen)
     return {"status": "ok", "screen": screen}
+
+
+# ── Screen designs ────────────────────────────────────────────────────────────
+
+@app.get("/api/designs")
+async def list_designs(screen: str = Query(default="main")):
+    return await database.get_designs(screen)
+
+
+@app.post("/api/designs", status_code=201)
+async def create_design(body: DesignCreate, screen: str = Query(default="main")):
+    design_id = await database.add_design(screen, body.name, body.matrix)
+    return {"id": design_id, "name": body.name}
+
+
+@app.put("/api/designs/{design_id}")
+async def update_design(design_id: int, body: DesignUpdate):
+    await database.update_design(design_id, body.name, body.matrix)
+    return {"status": "ok"}
+
+
+@app.delete("/api/designs/{design_id}")
+async def delete_design(design_id: int):
+    await database.delete_design(design_id)
+    return {"status": "ok"}
+
+
+@app.post("/api/designs/{design_id}/push")
+async def push_design(design_id: int, screen: str = Query(default="main"),
+                      duration: Optional[int] = Query(default=None)):
+    design = await database.get_design(design_id)
+    if not design:
+        raise HTTPException(404, "Design not found")
+    state = get_screen_state(screen)
+    state.matrix = design["matrix"]
+    state.color_matrix = None
+    state.photo_url = None
+    state.mode = "matrix_push"
+    _schedule_revert(state, screen, duration)
+    await _broadcast_screen(state)
+    return {"status": "ok"}
+
+
+@app.post("/api/designs/{design_id}/queue")
+async def queue_design(design_id: int, body: DesignQueueAdd, screen: str = Query(default="main")):
+    design = await database.get_design(design_id)
+    if not design:
+        raise HTTPException(404, "Design not found")
+    state = get_screen_state(screen)
+    item_id = await database.add_playlist_item(
+        screen, "matrix", {"matrix": design["matrix"], "name": design["name"]}, body.duration
+    )
+    state.playlist_items = await database.get_playlist_items(screen)
+    return {"status": "ok", "item_id": item_id}
 
 
 # ── Global settings ───────────────────────────────────────────────────────────

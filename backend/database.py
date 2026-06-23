@@ -119,6 +119,17 @@ async def _create_tables(db: aiosqlite.Connection):
         )
     """)
 
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS designs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id     INTEGER NOT NULL DEFAULT 1,
+            screen_id  TEXT    NOT NULL DEFAULT 'main',
+            name       TEXT    NOT NULL,
+            matrix     TEXT    NOT NULL,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
 
 async def _migrate(db: aiosqlite.Connection):
     """Add org_id to legacy tables that predate multi-tenant support."""
@@ -603,6 +614,61 @@ async def remove_playlist_items_by_image_url(image_url: str, org_id: int = DEFAU
             "DELETE FROM playlist_items WHERE org_id=? AND content LIKE ?",
             (org_id, f'%{image_url}%'),
         )
+        await db.commit()
+
+
+async def get_designs(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, name, matrix, created_at FROM designs "
+            "WHERE org_id=? AND screen_id=? ORDER BY created_at DESC",
+            (org_id, screen_id),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [
+        {"id": r["id"], "name": r["name"],
+         "matrix": json.loads(r["matrix"]), "created_at": r["created_at"]}
+        for r in rows
+    ]
+
+
+async def get_design(design_id: int, org_id: int = DEFAULT_ORG_ID) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, name, matrix, created_at FROM designs WHERE id=? AND org_id=?",
+            (design_id, org_id),
+        ) as cur:
+            row = await cur.fetchone()
+    if row is None:
+        return None
+    return {"id": row["id"], "name": row["name"],
+            "matrix": json.loads(row["matrix"]), "created_at": row["created_at"]}
+
+
+async def add_design(screen_id: str, name: str, matrix: list, org_id: int = DEFAULT_ORG_ID) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO designs (org_id, screen_id, name, matrix) VALUES (?,?,?,?)",
+            (org_id, screen_id, name, json.dumps(matrix)),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def update_design(design_id: int, name: str, matrix: list, org_id: int = DEFAULT_ORG_ID):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE designs SET name=?, matrix=? WHERE id=? AND org_id=?",
+            (name, json.dumps(matrix), design_id, org_id),
+        )
+        await db.commit()
+
+
+async def delete_design(design_id: int, org_id: int = DEFAULT_ORG_ID):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM designs WHERE id=? AND org_id=?", (design_id, org_id))
         await db.commit()
 
 

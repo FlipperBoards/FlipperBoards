@@ -7,12 +7,14 @@ import SettingsPanel from './SettingsPanel'
 import ImageUpload from './ImageUpload'
 import ImagePlaylist from './ImagePlaylist'
 import ScreenManager from './ScreenManager'
+import ScreenDesigner from './ScreenDesigner'
 import { useDisplayState } from '../../hooks/useDisplayState'
 
 const TABS = [
   { id: 'display',  label: 'Modes',   Icon: IconModes },
   { id: 'text',     label: 'Text',    Icon: IconText },
   { id: 'image',    label: 'Image',   Icon: IconImage },
+  { id: 'design',   label: 'Design',  Icon: IconDesign },
   { id: 'playlist', label: 'Queue',   Icon: IconQueue },
   { id: 'screens',  label: 'Screens', Icon: IconScreens },
   { id: 'settings', label: 'Config',  Icon: IconSettings },
@@ -48,6 +50,19 @@ function IconImage({ active }) {
       <rect x="2" y="3.5" width="16" height="13" rx="2" stroke={c} strokeWidth="1.5"/>
       <circle cx="7" cy="8" r="1.5" fill={c}/>
       <path d="M2 14l4.5-4.5 3 2.5 3-3.5 5 5" stroke={c} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+function IconDesign({ active }) {
+  const c = active ? '#3b82f6' : '#475569'
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+      <rect x="2" y="2" width="7" height="7" rx="1" fill={c} opacity="0.9"/>
+      <rect x="11" y="2" width="7" height="7" rx="1" fill={c} opacity="0.5"/>
+      <rect x="2" y="11" width="7" height="7" rx="1" fill={c} opacity="0.5"/>
+      <rect x="11" y="11" width="7" height="7" rx="1" fill={c} opacity="0.9"/>
+      <path d="M13.5 13.5l3 3M13.5 16.5l3-3" stroke={active ? '#fff' : '#1e293b'} strokeWidth="1.2" strokeLinecap="round"/>
     </svg>
   )
 }
@@ -243,6 +258,14 @@ export default function RemoteControl() {
           )}
           {activeTab === 'image' && (
             <ImageUpload
+              rows={rows}
+              cols={cols}
+              screenId={activeScreenId}
+            />
+          )}
+          {activeTab === 'design' && (
+            <ScreenDesigner
+              key={`${activeScreenId}-${refreshKey}`}
               rows={rows}
               cols={cols}
               screenId={activeScreenId}
