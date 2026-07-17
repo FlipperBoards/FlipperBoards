@@ -57,6 +57,9 @@ class ScreenState:
 
 _screens: dict[str, ScreenState] = {}
 
+# MQTT bridge instance — created in lifespan when enabled in settings
+_mqtt = None
+
 
 def get_screen_state(screen_id: str) -> ScreenState:
     if screen_id not in _screens:
@@ -147,7 +150,7 @@ async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict, scree
     return blank_matrix(rows, cols)
 
 
-async def _render_playlist_item(state: ScreenState):
+async def _render_playlist_item(state: ScreenState, transition: str | None = None):
     """Render and broadcast the current playlist item."""
     if not state.playlist_items:
         return
@@ -185,7 +188,16 @@ async def _render_playlist_item(state: ScreenState):
         state.mode = "matrix_push"
         state.matrix = content.get("matrix", blank_matrix(state.rows, state.cols))
 
-    await _broadcast_screen(state)
+    elif item_type == "scoreboard":
+        from services.scoreboard import get_scoreboard_matrix
+        state.mode = "scoreboard"
+        state.matrix = get_scoreboard_matrix(
+            state.rows, state.cols,
+            content.get("home_name", "HOME"), content.get("away_name", "AWAY"),
+            content.get("home_score", 0), content.get("away_score", 0),
+        )
+
+    await _broadcast_screen(state, transition=transition)
 
 
 async def advance_screen_mode(screen_id: str):
@@ -197,8 +209,11 @@ async def advance_screen_mode(screen_id: str):
 
     # Universal playlist takes priority when items exist
     if state.playlist_items:
+        old_pos = state.playlist_pos
         state.playlist_pos = (state.playlist_pos + 1) % len(state.playlist_items)
-        await _render_playlist_item(state)
+        # Full-board sweep only when the displayed item actually changes
+        await _render_playlist_item(
+            state, transition="sweep" if state.playlist_pos != old_pos else None)
         return
 
     # Fallback: rotate through enabled modes
@@ -219,10 +234,10 @@ async def advance_screen_mode(screen_id: str):
         mode_name, state.rows, state.cols, db_settings,
         screen_id=screen_id, mode_config=mode_entry.get("config", {}),
     )
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, transition="sweep" if len(enabled) > 1 else None)
 
 
-async def _broadcast_screen(state: ScreenState):
+async def _broadcast_screen(state: ScreenState, transition: str | None = None):
     if state.photo_url is not None:
         await manager.broadcast(state.screen_id, {
             "type": "photo_split",
@@ -240,14 +255,20 @@ async def _broadcast_screen(state: ScreenState):
             "screen_id": state.screen_id,
         })
     else:
-        await manager.broadcast(state.screen_id, {
+        msg = {
             "type": "display_update",
             "matrix": state.matrix,
             "rows": state.rows,
             "cols": state.cols,
             "mode": state.mode,
             "screen_id": state.screen_id,
-        })
+        }
+        if transition:
+            msg["transition"] = transition
+        await manager.broadcast(state.screen_id, msg)
+
+    if _mqtt:
+        await _mqtt.publish_screen_state(state)
 
 
 async def _rotation_loop(screen_id: str):
@@ -365,8 +386,17 @@ async def lifespan(app: FastAPI):
 
     _clock_task = asyncio.create_task(_clock_tick_loop())
 
+    global _mqtt
+    from mqtt_bridge import MQTTBridge
+    _mqtt = MQTTBridge(dispatch=_mqtt_dispatch,
+                       screens_provider=lambda: _screens,
+                       modes_provider=mode_registry.all_modes)
+    await _mqtt.start()
+
     yield
 
+    await _mqtt.stop()
+    _mqtt = None
     _clock_task.cancel()
     for sid in list(_screens.keys()):
         _stop_screen_rotation(sid)
@@ -415,6 +445,20 @@ class SettingsUpdate(BaseModel):
     divider_color: Optional[str] = None
     physical_mode: Optional[bool] = None
     flip_duration: Optional[int] = None
+    mqtt_enabled: Optional[bool] = None
+    mqtt_host: Optional[str] = None
+    mqtt_port: Optional[int] = None
+    mqtt_username: Optional[str] = None
+    mqtt_password: Optional[str] = None
+    mqtt_base_topic: Optional[str] = None
+    mqtt_ha_discovery: Optional[bool] = None
+
+class ModeContent(BaseModel):
+    mode: str
+    duration: Optional[int] = None
+
+class PlaylistJump(BaseModel):
+    pos: int
 
 class ImageUpdate(BaseModel):
     name: Optional[str] = None
@@ -535,6 +579,8 @@ async def create_screen(body: ScreenCreate):
     _start_screen_rotation(body.id)
 
     await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
+    if _mqtt:
+        await _mqtt.refresh_discovery()
     return {"status": "created", "id": body.id}
 
 
@@ -552,6 +598,8 @@ async def update_screen(screen_id: str, body: ScreenUpdate):
         state.matrix = blank_matrix(body.rows, body.cols)
 
     await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
+    if _mqtt:
+        await _mqtt.refresh_discovery()
     return {"status": "updated"}
 
 
@@ -565,6 +613,8 @@ async def delete_screen(screen_id: str):
     del _screens[screen_id]
     await database.delete_screen(screen_id)
     await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
+    if _mqtt:
+        await _mqtt.remove_screen_discovery(screen_id)
     return {"status": "deleted"}
 
 
@@ -709,6 +759,27 @@ async def next_mode(screen: str = Query(default="main")):
     return {"status": "ok", "mode": _screens[screen].mode}
 
 
+@app.post("/api/display/mode")
+async def push_mode(content: ModeContent, screen: str = Query(default="main")):
+    """Switch the display to a specific mode immediately."""
+    state = get_screen_state(screen)
+    mode = content.mode.strip().lower()
+    if mode_registry.get(mode) is None:
+        raise HTTPException(400, f"Unknown mode '{mode}'")
+    db_settings = await database.get_settings()
+    mode_entries = await database.get_modes(screen)
+    mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
+    mode_config = mode_entry.get("config", {}) if mode_entry else {}
+    state.mode = mode
+    state.color_matrix = None
+    state.photo_url = None
+    state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings,
+                                      screen_id=screen, mode_config=mode_config)
+    _schedule_revert(state, screen, content.duration)
+    await _broadcast_screen(state)
+    return {"status": "ok", "mode": mode}
+
+
 # ── File upload / image library ────────────────────────────────────────────────
 
 @app.post("/api/upload")
@@ -787,6 +858,12 @@ async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: s
     state = get_screen_state(screen)
     await database.update_playlist_item(item_id, body.type, body.content, body.duration)
     state.playlist_items = await database.get_playlist_items(screen)
+    # Live-update: if the edited item is on screen now, re-render in place.
+    # No transition — only tiles whose character changed will flip.
+    if state.playlist_items:
+        cur = state.playlist_items[state.playlist_pos % len(state.playlist_items)]
+        if cur["id"] == item_id:
+            await _render_playlist_item(state)
     return {"status": "updated"}
 
 
@@ -827,11 +904,27 @@ async def play_playlist(screen: str = Query(default="main")):
     if not state.playlist_items:
         raise HTTPException(400, "Playlist is empty")
     state.playlist_pos = 0
-    await _render_playlist_item(state)
+    await _render_playlist_item(state, transition="sweep")
     # Restart rotation so timer starts fresh from now
     _stop_screen_rotation(screen)
     _start_screen_rotation(screen)
     return {"status": "ok", "screen": screen}
+
+
+@app.post("/api/playlist/jump")
+async def jump_playlist(body: PlaylistJump, screen: str = Query(default="main")):
+    """Jump to a specific playlist position and restart the rotation timer."""
+    state = get_screen_state(screen)
+    state.playlist_items = await database.get_playlist_items(screen)
+    if not state.playlist_items:
+        raise HTTPException(400, "Playlist is empty")
+    if not 0 <= body.pos < len(state.playlist_items):
+        raise HTTPException(400, f"pos must be 0..{len(state.playlist_items) - 1}")
+    state.playlist_pos = body.pos
+    await _render_playlist_item(state, transition="sweep")
+    _stop_screen_rotation(screen)
+    _start_screen_rotation(screen)
+    return {"status": "ok", "screen": screen, "pos": body.pos}
 
 
 # ── Screen designs ────────────────────────────────────────────────────────────
@@ -908,6 +1001,9 @@ async def update_settings(body: SettingsUpdate):
 
     if "rotation_interval" in updates:
         _restart_all_rotations()
+
+    if _mqtt and any(k.startswith("mqtt_") for k in updates):
+        await _mqtt.restart()
 
     new_settings = await database.get_settings()
     await manager.broadcast_all({"type": "settings_update", "settings": new_settings})
@@ -1033,6 +1129,113 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
             await ws.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(ws, screen)
+
+
+# ── MQTT command dispatch ─────────────────────────────────────────────────────
+# Maps MQTT command topics onto the same handlers the REST API uses.
+
+def _mqtt_json(payload: str) -> dict | None:
+    try:
+        data = json.loads(payload)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload: str):
+    if screen_id not in _screens:
+        print(f"MQTT: unknown screen '{screen_id}'")
+        return
+    state = _screens[screen_id]
+    data = _mqtt_json(payload)
+
+    try:
+        if command == "text":
+            text = data.get("text", "") if data else payload
+            duration = data.get("duration") if data else None
+            await push_text(DisplayContent(text=text, duration=duration), screen=screen_id)
+            if _mqtt:
+                await _mqtt.publish_screen_state(state, text=text)
+
+        elif command == "matrix":
+            if not data or "matrix" not in data:
+                return
+            await push_matrix(MatrixContent(matrix=data["matrix"],
+                                            duration=data.get("duration")), screen=screen_id)
+
+        elif command == "design":
+            ref = data.get("design") if data else payload
+            duration = data.get("duration") if data else None
+            designs = await database.get_designs(screen_id)
+            design = next(
+                (d for d in designs
+                 if str(d["id"]) == str(ref) or d["name"].lower() == str(ref).lower()),
+                None)
+            if design:
+                await push_design(design["id"], screen=screen_id, duration=duration)
+            else:
+                print(f"MQTT: design '{ref}' not found")
+
+        elif command == "image":
+            ref = data.get("image") if data else payload
+            duration = data.get("duration") if data else None
+            images = await database.get_images()
+            img = next(
+                (i for i in images
+                 if str(i["id"]) == str(ref) or (i.get("name") or "").lower() == str(ref).lower()),
+                None)
+            if img:
+                await push_library_photo(img["id"], screen=screen_id, duration=duration)
+            else:
+                print(f"MQTT: image '{ref}' not found")
+
+        elif command == "mode":
+            await push_mode(ModeContent(mode=payload), screen=screen_id)
+
+        elif command == "blank":
+            await blank_display(screen=screen_id)
+
+        elif command == "playlist":
+            action = payload.lower()
+            if action == "next":
+                await advance_screen_mode(screen_id)
+            elif action == "play":
+                await play_playlist(screen=screen_id)
+            else:
+                try:
+                    await jump_playlist(PlaylistJump(pos=int(action)), screen=screen_id)
+                except ValueError:
+                    print(f"MQTT: unknown playlist action '{payload}'")
+
+        elif command == "scoreboard":
+            if not data:
+                return
+            item_ref = arg or data.get("id")
+            item = None
+            if item_ref is not None:
+                item = next((i for i in state.playlist_items
+                             if str(i["id"]) == str(item_ref)), None)
+            else:
+                item = next((i for i in state.playlist_items
+                             if i["type"] == "scoreboard"), None)
+            if not item:
+                print(f"MQTT: scoreboard item '{item_ref}' not found on '{screen_id}'")
+                return
+            content = dict(item.get("content", {}))
+            for key in ("home_score", "away_score", "home_name", "away_name"):
+                if key in data:
+                    content[key] = data[key]
+            await database.update_playlist_item(item["id"], "scoreboard",
+                                                content, item.get("duration"))
+            state.playlist_items = await database.get_playlist_items(screen_id)
+            cur = state.playlist_items[state.playlist_pos % len(state.playlist_items)]
+            if cur["id"] == item["id"]:
+                await _render_playlist_item(state)  # no transition — digits only
+
+        else:
+            print(f"MQTT: unknown command '{command}'")
+    except HTTPException as e:
+        print(f"MQTT: command '{command}' rejected: {e.detail}")
 
 
 # ── Serve frontend ────────────────────────────────────────────────────────────

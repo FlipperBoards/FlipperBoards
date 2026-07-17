@@ -12,6 +12,7 @@ export function useDisplayState(screenId = 'main') {
   const [modes, setModes] = useState([])
   const [screens, setScreens] = useState([])
   const [connected, setConnected] = useState(false)
+  const [sweepNonce, setSweepNonce] = useState(0)
 
   const handleMessage = useCallback((data) => {
     setConnected(true)
@@ -19,6 +20,7 @@ export function useDisplayState(screenId = 'main') {
     switch (data.type) {
       case 'display_update':
         if (forMe) {
+          if (data.transition === 'sweep') setSweepNonce(n => n + 1)
           setMatrix(data.matrix || [])
           setRows(data.rows || 6)
           setCols(data.cols || 22)
@@ -59,5 +61,5 @@ export function useDisplayState(screenId = 'main') {
 
   useWebSocket(handleMessage, screenId)
 
-  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected }
+  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, sweepNonce }
 }

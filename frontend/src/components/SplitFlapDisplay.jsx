@@ -23,8 +23,10 @@ export default function SplitFlapDisplay({
   dividerColor = '#111111',
   physicalMode = false,
   fillViewport = false,    // when true: no padding/shadow/header, flush fill
+  sweepNonce = 0,          // increments when the server requests a full-board sweep
 }) {
   const prevMatrixRef = useRef([])
+  const prevSweepRef = useRef(sweepNonce)
 
   const normalizedMatrix = useMemo(() => {
     const result = []
@@ -40,20 +42,22 @@ export default function SplitFlapDisplay({
   }, [matrix, rows, cols])
 
   const staggerMap = useMemo(() => {
+    const sweeping = sweepNonce !== prevSweepRef.current
+    prevSweepRef.current = sweepNonce
     const map = []
     for (let r = 0; r < rows; r++) {
       const row = []
       for (let c = 0; c < cols; c++) {
         const prevCode = prevMatrixRef.current?.[r]?.[c] ?? -1
         const newCode = normalizedMatrix[r]?.[c] ?? 0
-        row.push(prevCode !== newCode ? c * STAGGER_MS_PER_COL : 0)
+        row.push(sweeping || prevCode !== newCode ? c * STAGGER_MS_PER_COL : 0)
       }
       map.push(row)
     }
     prevMatrixRef.current = normalizedMatrix
     return map
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedMatrix])
+  }, [normalizedMatrix, sweepNonce])
 
   // Physical mode tile shadow — makes each tile look inset/3D
   const tileShadow = physicalMode
@@ -96,7 +100,7 @@ export default function SplitFlapDisplay({
                 ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                     tileFill delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
                 : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
-                    tileFill gridFontSize={gridFontSize}
+                    tileFill gridFontSize={gridFontSize} sweepNonce={sweepNonce}
                     delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
           )
         )}
@@ -148,7 +152,8 @@ export default function SplitFlapDisplay({
                   ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                       size={tileSize} delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
                   : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
-                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
+                      size={tileSize} sweepNonce={sweepNonce}
+                      delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
             ))}
           </div>
         ))}

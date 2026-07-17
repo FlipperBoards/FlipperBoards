@@ -8,6 +8,8 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [addMode, setAddMode] = useState('clock')
   const [addText, setAddText] = useState('')
   const [addPhoto, setAddPhoto] = useState(null)
+  const [addHomeName, setAddHomeName] = useState('')
+  const [addAwayName, setAddAwayName] = useState('')
   const [addDuration, setAddDuration] = useState(30)
   const [saving, setSaving] = useState(false)
   const [playing, setPlaying] = useState(false)
@@ -16,10 +18,18 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
   const modeById = Object.fromEntries(availableModes.map(m => [m.id, m]))
 
-  const itemIcon  = (item) => item.type === 'text' ? '📝' : item.type === 'photo' ? '🖼️' : modeById[item.content?.mode]?.icon ?? '⬡'
+  const itemIcon  = (item) =>
+    item.type === 'text' ? '📝'
+    : item.type === 'photo' ? '🖼️'
+    : item.type === 'scoreboard' ? '🆚'
+    : modeById[item.content?.mode]?.icon ?? '⬡'
   const itemLabel = (item) => {
     if (item.type === 'text') { const t = item.content?.text ?? ''; return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}"` }
     if (item.type === 'photo') return item.content?.url?.split('/').pop() ?? 'Photo'
+    if (item.type === 'scoreboard') {
+      const c = item.content ?? {}
+      return `${c.home_name ?? 'HOME'} ${c.home_score ?? 0} — ${c.away_score ?? 0} ${c.away_name ?? 'AWAY'}`
+    }
     return modeById[item.content?.mode]?.label ?? item.content?.mode ?? 'Mode'
   }
 
@@ -52,6 +62,13 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
         content = { url }
       } else if (addType === 'text') {
         content = { text: addText }
+      } else if (addType === 'scoreboard') {
+        content = {
+          home_name: addHomeName.trim().toUpperCase(),
+          away_name: addAwayName.trim().toUpperCase(),
+          home_score: 0,
+          away_score: 0,
+        }
       } else {
         content = { mode: addMode }
       }
@@ -64,9 +81,25 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
       setShowAdd(false)
       setAddText('')
       setAddPhoto(null)
+      setAddHomeName('')
+      setAddAwayName('')
     } finally {
       setSaving(false)
     }
+  }
+
+  const bumpScore = async (item, side, delta) => {
+    const next = Math.max(0, (item.content?.[side] ?? 0) + delta)
+    await fetch(`/api/playlist/${item.id}${qs}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'scoreboard',
+        content: { ...item.content, [side]: next },
+        duration: item.duration,
+      }),
+    })
+    await load()
   }
 
   const remove = async (id) => { await fetch(`/api/playlist/${id}${qs}`, { method: 'DELETE' }); await load() }
@@ -149,6 +182,27 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
                     <img src={item.content?.url} alt="" className="h-5 w-8 object-cover rounded" style={{ border: '1px solid var(--border)' }} />
                     <span className="text-[11px] font-mono truncate" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
                   </div>
+                ) : item.type === 'scoreboard' ? (
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-mono truncate block" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
+                    <div className="flex items-center gap-1">
+                      {[['home_score', item.content?.home_name ?? 'HOME'], ['away_score', item.content?.away_name ?? 'AWAY']].map(([side, label]) => (
+                        <div key={side} className="flex items-center gap-0.5 rounded px-1 py-0.5"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
+                          <span className="text-[9px] font-mono px-0.5 max-w-[52px] truncate" style={{ color: 'var(--text-3)' }}>{label}</span>
+                          <button onClick={() => bumpScore(item, side, -1)}
+                            className="w-4 h-4 flex items-center justify-center text-[11px] rounded transition-colors"
+                            style={{ color: 'var(--text-2)' }}>−</button>
+                          <span className="text-[11px] font-mono w-5 text-center" style={{ color: 'var(--text-1)' }}>
+                            {item.content?.[side] ?? 0}
+                          </span>
+                          <button onClick={() => bumpScore(item, side, 1)}
+                            className="w-4 h-4 flex items-center justify-center text-[11px] rounded transition-colors"
+                            style={{ color: 'var(--accent)' }}>+</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 ) : (
                   <span className="text-[11px] font-mono truncate block" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
                 )}
@@ -213,13 +267,13 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
           {/* Type tabs */}
           <div className="flex gap-1">
-            {['mode', 'text', 'photo'].map(t => (
+            {['mode', 'text', 'photo', 'scoreboard'].map(t => (
               <button key={t} onClick={() => setAddType(t)}
                 className="flex-1 py-1.5 rounded-lg text-xs font-mono font-semibold tracking-wider transition-colors uppercase"
                 style={addType === t
                   ? { background: 'var(--accent)', color: '#fff' }
                   : { background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
-                {t === 'mode' ? 'Mode' : t === 'text' ? 'Text' : 'Photo'}
+                {t === 'mode' ? 'Mode' : t === 'text' ? 'Text' : t === 'photo' ? 'Photo' : 'Score'}
               </button>
             ))}
           </div>
@@ -243,6 +297,25 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
             <textarea value={addText} onChange={e => setAddText(e.target.value)}
               placeholder="Enter message text…" rows={3}
               className="fb-input resize-none" />
+          )}
+
+          {addType === 'scoreboard' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: '#2a9d8f' }} />
+                <input type="text" value={addHomeName} onChange={e => setAddHomeName(e.target.value)}
+                  placeholder="Home team name…" maxLength={16} className="fb-input flex-1" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: '#e63946' }} />
+                <input type="text" value={addAwayName} onChange={e => setAddAwayName(e.target.value)}
+                  placeholder="Away team name…" maxLength={16} className="fb-input flex-1" />
+              </div>
+              <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+                Scores start at 0 — bump them live from the playlist row, the API, or MQTT.
+                Only the changed digits flip.
+              </p>
+            </div>
           )}
 
           {addType === 'photo' && (
@@ -276,7 +349,8 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
           <div className="flex gap-2 pt-1">
             <button onClick={addItem}
-              disabled={saving || (addType === 'text' && !addText.trim()) || (addType === 'photo' && !addPhoto)}
+              disabled={saving || (addType === 'text' && !addText.trim()) || (addType === 'photo' && !addPhoto)
+                || (addType === 'scoreboard' && (!addHomeName.trim() || !addAwayName.trim()))}
               className="fb-btn-primary flex-1">
               {saving ? 'Adding…' : 'Add to Playlist'}
             </button>

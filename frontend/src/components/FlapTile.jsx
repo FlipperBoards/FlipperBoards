@@ -42,12 +42,14 @@ export default function FlapTile({
   soundEnabled = true,
   flipDuration = 120,   // ms per step (fold + rise each use this duration)
   extraShadow = undefined,
+  sweepNonce = 0,       // increments to force a flip cycle even when code is unchanged
 }) {
   const [displayCode, setDisplayCode] = useState(code)
   const [isFlipping, setIsFlipping] = useState(false)
   const [foldChar, setFoldChar] = useState(codeToChar(code))
   const [riseChar, setRiseChar] = useState(codeToChar(code))
   const prevCodeRef = useRef(code)
+  const prevSweepRef = useRef(sweepNonce)
   const animTimers = useRef([])
   const delayRef = useRef(delay)
   const soundEnabledRef = useRef(soundEnabled)
@@ -68,11 +70,7 @@ export default function FlapTile({
   const h  = tileHeight ?? preset.h
   const fs = tileWidth  ? Math.max(9, Math.floor(Math.min(w, h) * 0.9)) : preset.fs
 
-  useEffect(() => {
-    if (code === prevCodeRef.current) return
-    const fromCode = prevCodeRef.current
-    prevCodeRef.current = code
-
+  const runFlipSequence = (fromCode, toCode) => {
     animTimers.current.forEach(clearTimeout)
     animTimers.current = []
 
@@ -81,8 +79,22 @@ export default function FlapTile({
     const stepMs = flipDurationRef.current
     const budget = 900 - delayRef.current
     const maxIntermediates = Math.max(0, Math.floor(budget / (stepMs + 10)) - 1)
-    const intermediates = getIntermediateChars(fromCode, code, maxIntermediates)
-    const sequence = [...intermediates, code]
+    let intermediates
+    if (fromCode === toCode) {
+      // Sweep cycle: a few forward neighbors in the ring, ending back on the same char
+      intermediates = []
+      let idx = fromCode
+      const want = Math.min(3, maxIntermediates)
+      let guard = 0
+      while (intermediates.length < want && guard < CHARS.length) {
+        idx = (idx + 1) % CHARS.length
+        if (idx !== toCode && !isColorCode(idx)) intermediates.push(idx)
+        guard++
+      }
+    } else {
+      intermediates = getIntermediateChars(fromCode, toCode, maxIntermediates)
+    }
+    const sequence = [...intermediates, toCode]
 
     // Apply stagger delay before starting animation
     const staggerTimer = setTimeout(() => {
@@ -94,7 +106,7 @@ export default function FlapTile({
           if (soundEnabledRef.current && i === 0) playFlipSound()
           const t2 = setTimeout(() => {
             setDisplayCode(stepCode)
-            setIsFlipping(stepCode !== code)
+            setIsFlipping(i < sequence.length - 1)
           }, stepMs)
           animTimers.current.push(t2)
         }, i * (stepMs + 10))
@@ -102,11 +114,36 @@ export default function FlapTile({
       })
     }, delayRef.current)
     animTimers.current.push(staggerTimer)
+  }
+
+  useEffect(() => {
+    if (code === prevCodeRef.current) return
+    const fromCode = prevCodeRef.current
+    prevCodeRef.current = code
+    // Consume any sweep arriving in this same commit — the tile is already flipping
+    prevSweepRef.current = sweepNonce
+    runFlipSequence(fromCode, code)
 
     return () => {
       animTimers.current.forEach(clearTimeout)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code])
+
+  // Full-board sweep: flip even though the character didn't change.
+  // Declared after the code effect so a same-commit code change wins (it
+  // consumes the nonce above and this effect no-ops).
+  useEffect(() => {
+    if (sweepNonce === prevSweepRef.current) return
+    prevSweepRef.current = sweepNonce
+    if (isColorCode(code)) return
+    runFlipSequence(code, code)
+
+    return () => {
+      animTimers.current.forEach(clearTimeout)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sweepNonce])
 
   const isColor = isColorCode(displayCode)
   const targetIsColor = isColorCode(code)

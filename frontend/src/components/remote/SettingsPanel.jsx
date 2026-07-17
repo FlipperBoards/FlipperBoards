@@ -74,6 +74,13 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         divider_width:     Number(s.divider_width) || 4,
         divider_color:     s.divider_color     || '#111111',
         physical_mode:     s.physical_mode === 'true',
+        mqtt_enabled:      s.mqtt_enabled === 'true',
+        mqtt_host:         s.mqtt_host        || '',
+        mqtt_port:         Number(s.mqtt_port) || 1883,
+        mqtt_username:     s.mqtt_username    || '',
+        mqtt_password:     s.mqtt_password    || '',
+        mqtt_base_topic:   s.mqtt_base_topic  || 'flipperboards',
+        mqtt_ha_discovery: s.mqtt_ha_discovery !== 'false',
       }),
     })
     setSaved(true)
@@ -248,6 +255,56 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
             <option value="false">Disabled</option>
           </select>
         </Field>
+      </Section>
+
+      {/* MQTT */}
+      <Section title="MQTT / Home Assistant">
+        <Field label="MQTT Control">
+          <select value={s.mqtt_enabled === 'true' ? 'true' : 'false'}
+            onChange={e => set('mqtt_enabled', e.target.value)} className="fb-input">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </Field>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <Field label="Broker Host">
+              <input type="text" placeholder="192.168.1.50" value={s.mqtt_host || ''}
+                onChange={e => set('mqtt_host', e.target.value)} className="fb-input" />
+            </Field>
+          </div>
+          <Field label="Port">
+            <input type="number" placeholder="1883" value={s.mqtt_port || '1883'}
+              onChange={e => set('mqtt_port', e.target.value)} className="fb-input" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Username">
+            <input type="text" placeholder="Optional" value={s.mqtt_username || ''}
+              onChange={e => set('mqtt_username', e.target.value)} className="fb-input" />
+          </Field>
+          <Field label="Password">
+            <input type="password" placeholder="Optional" value={s.mqtt_password || ''}
+              onChange={e => set('mqtt_password', e.target.value)} className="fb-input" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Base Topic">
+            <input type="text" placeholder="flipperboards" value={s.mqtt_base_topic || 'flipperboards'}
+              onChange={e => set('mqtt_base_topic', e.target.value)} className="fb-input" />
+          </Field>
+          <Field label="HA Discovery">
+            <select value={s.mqtt_ha_discovery === 'false' ? 'false' : 'true'}
+              onChange={e => set('mqtt_ha_discovery', e.target.value)} className="fb-input">
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </Field>
+        </div>
+        <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+          Saving restarts the MQTT connection. With HA Discovery on, each screen
+          appears in Home Assistant as a device with message, mode, and button entities.
+        </p>
       </Section>
 
       <button

@@ -177,6 +177,21 @@ The **Playlist** tab builds an ordered sequence of any content type. When the pl
 
 Remove all playlist items to return to the Modes rotation.
 
+### Scoreboard items
+
+The **Score** item type shows two teams with live scores — home team with a
+green accent tile, away with red, scores right-aligned:
+
+```
+█ HAWKS             12
+█ OWLS               7
+```
+
+Bump scores from the playlist row's **+/−** buttons, the REST API, or MQTT —
+**only the changed digit tiles flip**, everything else stays still. When the
+playlist advances to the next game (or any other item), the whole board does a
+dramatic full flip sweep.
+
 ---
 
 ## Image Display
@@ -225,6 +240,7 @@ POST /api/display/color-matrix
 
 ```http
 POST /api/display/photo          # multipart/form-data, field: file
+POST /api/display/mode           # { "mode": "clock", "duration": 60 }
 POST /api/display/blank          # clear to blank
 POST /api/display/next           # advance to next item
 GET  /api/state                  # current display state
@@ -240,6 +256,7 @@ DELETE /api/playlist/{id}        # remove item
 POST   /api/playlist/reorder     # { "ids": [3,1,2] }
 POST   /api/playlist/clear       # remove all
 POST   /api/playlist/play        # jump to item 1 now
+POST   /api/playlist/jump        # { "pos": 2 } — jump to a specific item
 ```
 
 Add items via curl:
@@ -259,6 +276,16 @@ URL=$(curl -s -F file=@logo.jpg http://<ip>:8000/api/upload | python3 -c "import
 curl -X POST http://<ip>:8000/api/playlist \
   -H 'Content-Type: application/json' \
   -d "{\"type\":\"photo\",\"content\":{\"url\":\"$URL\"},\"duration\":15}"
+
+# Scoreboard item
+curl -X POST http://<ip>:8000/api/playlist \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scoreboard","content":{"home_name":"HAWKS","away_name":"OWLS","home_score":0,"away_score":0},"duration":60}'
+
+# Live score update — only the changed digit flips
+curl -X PUT http://<ip>:8000/api/playlist/<id> \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scoreboard","content":{"home_name":"HAWKS","away_name":"OWLS","home_score":1,"away_score":0},"duration":60}'
 ```
 
 ### Screens
@@ -294,6 +321,63 @@ PUT  /api/settings               # update any subset
 
 ---
 
+## MQTT & Home Assistant
+
+Enable in **Config → MQTT / Home Assistant** (broker host/port/credentials).
+Everything the REST API can do, MQTT can do — from Home Assistant, Node-RED,
+or a plain `mosquitto_pub`.
+
+### Command topics
+
+Base topic is configurable (default `flipperboards`); `<sid>` is the screen id
+(`main` unless you've added screens).
+
+| Topic | Payload |
+|-------|---------|
+| `flipperboards/<sid>/text/set` | `HELLO WORLD` or `{"text":"HI","duration":30}` |
+| `flipperboards/<sid>/matrix/set` | `{"matrix":[[...codes...]],"duration":30}` |
+| `flipperboards/<sid>/design/set` | design name, id, or `{"design":"My Design","duration":60}` |
+| `flipperboards/<sid>/image/set` | library image id/name or `{"image":12,"duration":60}` |
+| `flipperboards/<sid>/mode/set` | mode id — `clock`, `weather`, `news`, … |
+| `flipperboards/<sid>/blank/set` | anything |
+| `flipperboards/<sid>/playlist/set` | `next` \| `play` \| item index (`2`) |
+| `flipperboards/<sid>/scoreboard/set` | `{"home_score":3}` — partial updates OK |
+| `flipperboards/<sid>/scoreboard/<item_id>/set` | same, targeting a specific playlist item |
+
+### State topics (published, retained)
+
+| Topic | Payload |
+|-------|---------|
+| `flipperboards/bridge/availability` | `online` / `offline` (last will) |
+| `flipperboards/<sid>/state` | `{"mode","rows","cols","playlist_pos","playlist_len"}` |
+| `flipperboards/<sid>/mode` | current mode string |
+| `flipperboards/<sid>/text/state` | last pushed text |
+
+### Examples
+
+```bash
+mosquitto_pub -h <broker> -t flipperboards/main/text/set -m 'DINNER IS READY'
+mosquitto_pub -h <broker> -t flipperboards/main/mode/set -m weather
+mosquitto_pub -h <broker> -t flipperboards/main/scoreboard/set -m '{"home_score":2,"away_score":1}'
+mosquitto_pub -h <broker> -t flipperboards/main/playlist/set -m next
+```
+
+### Home Assistant discovery
+
+With **HA Discovery** enabled (default), each screen announces itself via MQTT
+discovery and appears in Home Assistant as a device — no YAML:
+
+- **Message** (text entity) — type a message, it appears on the board
+- **Mode** (select) — switch between clock/weather/news/…
+- **Next** (button) — advance the playlist
+- **Blank** (button) — clear the display
+
+Note: after a text/image push the mode state may show values not in the select
+options (e.g. `text_push`) — HA displays the select as unknown until a real
+mode is active again.
+
+---
+
 ## Settings Reference
 
 | Key | Default | Description |
@@ -315,6 +399,13 @@ PUT  /api/settings               # update any subset
 | `news_api_key` | — | NewsAPI key (optional) |
 | `news_categories` | `["technology","general"]` | JSON array |
 | `calendar_ical_url` | — | iCal URL |
+| `mqtt_enabled` | `false` | Enable the MQTT bridge |
+| `mqtt_host` | — | Broker hostname/IP |
+| `mqtt_port` | `1883` | Broker port |
+| `mqtt_username` | — | Broker username (optional) |
+| `mqtt_password` | — | Broker password (optional) |
+| `mqtt_base_topic` | `flipperboards` | Topic prefix |
+| `mqtt_ha_discovery` | `true` | Home Assistant MQTT discovery |
 
 ---
 

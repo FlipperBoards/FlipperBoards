@@ -239,6 +239,13 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "divider_width": "4",
         "divider_color": "#111111",
         "physical_mode": "false",
+        "mqtt_enabled": "false",
+        "mqtt_host": "",
+        "mqtt_port": "1883",
+        "mqtt_username": "",
+        "mqtt_password": "",
+        "mqtt_base_topic": "flipperboards",
+        "mqtt_ha_discovery": "true",
     }
     for key, value in global_defaults.items():
         await db.execute(
