@@ -1,18 +1,27 @@
 services:
   flipperboards:
-    build: .
+    # Pre-built image from GitHub Container Registry (recommended)
+    image: ghcr.io/flipperboards/flipperboards:latest
+    # To build from source instead, comment out 'image' and uncomment:
+    # build: .
     ports:
-      - "8000:8000"
+      - "${FB_HOST_PORT:-8000}:8000"
     volumes:
-      - ./data:/app/data        # SQLite database
-      - ./data/uploads:/app/uploads  # uploaded photos
+      - "${DATA_DIR:-./data}:/data"
     environment:
-      - FB_DB_PATH=/app/data/flipperboards.db
+      - FB_DB_PATH=/data/flipperboards.db
+      - FB_UPLOAD_DIR=/data/uploads
       - FB_HOST=0.0.0.0
       - FB_PORT=8000
+      - TZ=${TZ:-America/New_York}
+      - FB_WEATHER_API_KEY=${FB_WEATHER_API_KEY:-}
+      - FB_NEWS_API_KEY=${FB_NEWS_API_KEY:-}
+      - FB_DEFAULT_ROWS=${FB_DEFAULT_ROWS:-6}
+      - FB_DEFAULT_COLS=${FB_DEFAULT_COLS:-22}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/state')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/screens')"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 15s

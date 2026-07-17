@@ -1,10 +1,65 @@
 import React, { useState, useEffect } from 'react'
 
+function DurationPicker({ value, onChange }) {
+  const presets = [
+    { label: 'Until changed', v: '' },
+    { label: '10s',  v: '10' },
+    { label: '30s',  v: '30' },
+    { label: '1 min', v: '60' },
+    { label: '5 min', v: '300' },
+  ]
+  const isPreset = presets.some(p => p.v === value)
+  const [custom, setCustom] = useState(false)
+
+  const handleSelect = v => {
+    if (v === '__custom__') { setCustom(true); onChange('60') }
+    else { setCustom(false); onChange(v) }
+  }
+
+  if (custom || (!isPreset && value !== '')) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <label className="section-label whitespace-nowrap">Display for</label>
+        <input
+          type="number" min={1} max={86400}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className="w-16 text-center fb-input py-1"
+        />
+        <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>sec</span>
+        <button
+          type="button"
+          onClick={() => { setCustom(false); onChange('') }}
+          className="text-[10px] font-mono opacity-50 hover:opacity-100"
+          style={{ color: 'var(--text-3)' }}
+        >
+          ×
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <label className="section-label whitespace-nowrap">Display for</label>
+      <select
+        value={value}
+        onChange={e => handleSelect(e.target.value)}
+        className="fb-input py-1 text-[11px]"
+      >
+        {presets.map(p => <option key={p.v} value={p.v}>{p.label}</option>)}
+        <option value="__custom__">Custom…</option>
+      </select>
+    </div>
+  )
+}
+
 export default function TextInput({ screenId = 'main', onRefresh }) {
   const [text, setText] = useState('')
   const [messages, setMessages] = useState([])
   const [status, setStatus] = useState('')
-  const [duration, setDuration] = useState(30)
+  const [pushDuration, setPushDuration] = useState('')   // '' = until changed
+  const [rotDuration, setRotDuration] = useState(30)     // rotation queue hold time
 
   const qs = `?screen=${encodeURIComponent(screenId)}`
 
@@ -22,7 +77,10 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
     await fetch(`/api/display/text${qs}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({
+        text,
+        duration: pushDuration !== '' ? parseInt(pushDuration, 10) : null,
+      }),
     })
     setStatus('sent')
     setTimeout(() => setStatus(''), 2000)
@@ -34,7 +92,7 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
     await fetch(`/api/messages${qs}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, duration }),
+      body: JSON.stringify({ text, duration: rotDuration }),
     })
     setText('')
     fetchMessages()
@@ -64,42 +122,50 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
           value={text}
           onChange={e => setText(e.target.value)}
         />
+
+        {/* Send Now row */}
+        <div
+          className="flex items-center justify-between gap-2 px-3 py-2.5"
+          style={{ borderTop: '1px solid var(--border)' }}
+        >
+          <DurationPicker value={pushDuration} onChange={setPushDuration} />
+          <button
+            type="submit"
+            form="text-form"
+            onClick={pushText}
+            disabled={!text.trim()}
+            className="fb-btn-primary text-[11px] px-4 py-1.5 flex-shrink-0"
+            style={status === 'sent' ? { background: '#16a34a' } : {}}
+          >
+            {status === 'sent' ? '✓ Sent' : 'Send Now'}
+          </button>
+        </div>
+
+        {/* Rotation queue row */}
         <div
           className="flex items-center justify-between gap-2 px-3 pb-3"
           style={{ borderTop: '1px solid var(--border)' }}
         >
-          <div className="flex items-center gap-2 pt-2">
-            <label className="section-label whitespace-nowrap">Hold</label>
+          <div className="flex items-center gap-2">
+            <label className="section-label whitespace-nowrap">Rotation hold</label>
             <input
               type="number"
               min={5}
               max={600}
-              value={duration}
-              onChange={e => setDuration(Number(e.target.value))}
+              value={rotDuration}
+              onChange={e => setRotDuration(Number(e.target.value))}
               className="w-16 text-center fb-input py-1"
             />
             <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>sec</span>
           </div>
-          <div className="flex gap-2 pt-2 flex-shrink-0">
-            <button
-              type="button"
-              onClick={addMessage}
-              disabled={!text.trim()}
-              className="fb-btn-ghost text-[11px] px-3 py-1.5"
-            >
-              + Rotation
-            </button>
-            <button
-              type="submit"
-              form="text-form"
-              onClick={pushText}
-              disabled={!text.trim()}
-              className="fb-btn-primary text-[11px] px-4 py-1.5"
-              style={status === 'sent' ? { background: '#16a34a' } : {}}
-            >
-              {status === 'sent' ? '✓ Sent' : 'Send Now'}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={addMessage}
+            disabled={!text.trim()}
+            className="fb-btn-ghost text-[11px] px-3 py-1.5 flex-shrink-0"
+          >
+            + Rotation
+          </button>
         </div>
       </div>
 

@@ -1,0 +1,111 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>FlipperBoards</Name>
+  <Repository>ghcr.io/flipperboards/flipperboards:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/FlipperBoards/FlipperBoards/issues</Support>
+  <Project>https://github.com/FlipperBoards/FlipperBoards</Project>
+  <Overview>
+    FlipperBoards is a self-hosted split-flap display simulator and controller.
+    Show clocks, weather, scrolling text, images, and hand-crafted designs on a
+    virtual Vestaboard-style display. Includes a web remote control, a tile-by-tile
+    Screen Designer with icon stamps, image playlist rotation, multi-screen support,
+    and an Android kiosk app. Open-source core with commercial hosting available at
+    https://flipperboards.com.
+  </Overview>
+  <Category>Tools: MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/FlipperBoards/FlipperBoards/main/unraid/FlipperBoards.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/FlipperBoards/FlipperBoards/main/unraid/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText>Support FlipperBoards</DonateText>
+  <DonateLink>https://flipperboards.com</DonateLink>
+  <Description>
+    Self-hosted split-flap (Vestaboard-style) display simulator. Clock, weather,
+    news, custom text, images, screen designer with icon stamps, multi-screen,
+    rotation playlists, web remote, and Android kiosk app.
+  </Description>
+
+  <Config
+    Name="Web UI Port"
+    Target="8000"
+    Default="8000"
+    Mode="tcp"
+    Description="Port to access the FlipperBoards web interface."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8000</Config>
+
+  <Config
+    Name="Data Path"
+    Target="/data"
+    Default="/mnt/user/appdata/flipperboards"
+    Mode="rw"
+    Description="Persistent storage for the database and uploaded images. All data lives here."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/flipperboards</Config>
+
+  <Config
+    Name="Timezone"
+    Target="TZ"
+    Default="America/New_York"
+    Mode=""
+    Description="Timezone for the clock display. Examples: America/Los_Angeles, Europe/London, Asia/Tokyo."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">America/New_York</Config>
+
+  <Config
+    Name="OpenWeather API Key"
+    Target="FB_WEATHER_API_KEY"
+    Default=""
+    Mode=""
+    Description="Optional: OpenWeatherMap API key to enable the Weather display mode. Get one free at openweathermap.org."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="News API Key"
+    Target="FB_NEWS_API_KEY"
+    Default=""
+    Mode=""
+    Description="Optional: NewsAPI.org key to enable the News Headlines display mode."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Display Rows"
+    Target="FB_DEFAULT_ROWS"
+    Default="6"
+    Mode=""
+    Description="Number of tile rows on the default screen (standard Vestaboard is 6)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">6</Config>
+
+  <Config
+    Name="Display Columns"
+    Target="FB_DEFAULT_COLS"
+    Default="22"
+    Mode=""
+    Description="Number of tile columns on the default screen (standard Vestaboard is 22)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">22</Config>
+
+</Container>

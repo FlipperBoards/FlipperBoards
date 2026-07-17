@@ -30,7 +30,8 @@ def get_org_id() -> int:
 
 # ── Upload directory ──────────────────────────────────────────────────────────
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+_upload_setting = settings.upload_dir
+UPLOAD_DIR = _upload_setting if os.path.isabs(_upload_setting) else os.path.join(os.path.dirname(__file__), _upload_setting)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -51,6 +52,7 @@ class ScreenState:
         self.mode: str = "clock"
         self.mode_idx: int = 0
         self.rotation_task: asyncio.Task | None = None
+        self.push_timer: asyncio.Task | None = None
 
 
 _screens: dict[str, ScreenState] = {}
@@ -178,6 +180,10 @@ async def _render_playlist_item(state: ScreenState):
     elif item_type == "color":
         state.mode = "image_push"
         state.color_matrix = content.get("color_matrix")
+
+    elif item_type == "matrix":
+        state.mode = "matrix_push"
+        state.matrix = content.get("matrix", blank_matrix(state.rows, state.cols))
 
     await _broadcast_screen(state)
 
@@ -379,12 +385,15 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 class DisplayContent(BaseModel):
     text: str
+    duration: Optional[int] = None   # seconds to show; None = until manually changed
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
+    duration: Optional[int] = None
 
 class ColorMatrixContent(BaseModel):
     color_matrix: list[list[str]]
+    duration: Optional[int] = None
 
 class SettingsUpdate(BaseModel):
     rotation_interval: Optional[int] = None
@@ -445,6 +454,17 @@ class PlaylistItemUpdate(BaseModel):
 
 class PlaylistReorder(BaseModel):
     ids: list[int]
+
+class DesignCreate(BaseModel):
+    name: str
+    matrix: list[list[int]]
+
+class DesignUpdate(BaseModel):
+    name: str
+    matrix: list[list[int]]
+
+class DesignQueueAdd(BaseModel):
+    duration: int = 30
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -557,6 +577,21 @@ async def _screens_payload():
     ]
 
 
+def _schedule_revert(state: ScreenState, screen_id: str, duration: Optional[int]) -> None:
+    """Cancel any existing push timer. If duration > 0, advance mode after N seconds."""
+    if state.push_timer and not state.push_timer.done():
+        state.push_timer.cancel()
+    state.push_timer = None
+    if duration is not None and duration > 0:
+        async def _revert():
+            try:
+                await asyncio.sleep(duration)
+                await advance_screen_mode(screen_id)
+            except asyncio.CancelledError:
+                pass
+        state.push_timer = asyncio.create_task(_revert())
+
+
 # ── Display control (immediate push) ─────────────────────────────────────────
 
 @app.get("/api/state")
@@ -582,6 +617,7 @@ async def push_text(content: DisplayContent, screen: str = Query(default="main")
     state.color_matrix = None
     state.photo_url = None
     state.mode = "text_push"
+    _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -597,6 +633,7 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state.color_matrix = None
     state.photo_url = None
     state.mode = "matrix_push"
+    _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -611,6 +648,7 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
     state.rows = len(content.color_matrix)
     state.cols = len(content.color_matrix[0]) if content.color_matrix else state.cols
     state.mode = "image_push"
+    _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen}
 
@@ -620,6 +658,7 @@ async def push_photo(
     file: UploadFile = File(...),
     name: str = Form(default=''),
     folder: str = Form(default=''),
+    duration: Optional[int] = Form(default=None),
     screen: str = Query(default="main"),
 ):
     state = get_screen_state(screen)
@@ -628,12 +667,13 @@ async def push_photo(
     state.photo_url = img['url']
     state.color_matrix = None
     state.mode = "photo_push"
+    _schedule_revert(state, screen, duration)
     await _broadcast_screen(state)
     return {"status": "ok", "screen": screen, **img}
 
 
 @app.post("/api/display/photo/push/{image_id}")
-async def push_library_photo(image_id: int, screen: str = Query(default="main")):
+async def push_library_photo(image_id: int, screen: str = Query(default="main"), duration: Optional[int] = Query(default=None)):
     """Push an already-uploaded library image to the display without re-uploading."""
     img = await database.get_image(image_id)
     if not img:
@@ -645,6 +685,7 @@ async def push_library_photo(image_id: int, screen: str = Query(default="main"))
     state.photo_url = f"/api/uploads/{image_id}/image"
     state.color_matrix = None
     state.mode = "photo_push"
+    _schedule_revert(state, screen, duration)
     await _broadcast_screen(state)
     return {"status": "ok", "image_url": state.photo_url}
 
@@ -791,6 +832,60 @@ async def play_playlist(screen: str = Query(default="main")):
     _stop_screen_rotation(screen)
     _start_screen_rotation(screen)
     return {"status": "ok", "screen": screen}
+
+
+# ── Screen designs ────────────────────────────────────────────────────────────
+
+@app.get("/api/designs")
+async def list_designs(screen: str = Query(default="main")):
+    return await database.get_designs(screen)
+
+
+@app.post("/api/designs", status_code=201)
+async def create_design(body: DesignCreate, screen: str = Query(default="main")):
+    design_id = await database.add_design(screen, body.name, body.matrix)
+    return {"id": design_id, "name": body.name}
+
+
+@app.put("/api/designs/{design_id}")
+async def update_design(design_id: int, body: DesignUpdate):
+    await database.update_design(design_id, body.name, body.matrix)
+    return {"status": "ok"}
+
+
+@app.delete("/api/designs/{design_id}")
+async def delete_design(design_id: int):
+    await database.delete_design(design_id)
+    return {"status": "ok"}
+
+
+@app.post("/api/designs/{design_id}/push")
+async def push_design(design_id: int, screen: str = Query(default="main"),
+                      duration: Optional[int] = Query(default=None)):
+    design = await database.get_design(design_id)
+    if not design:
+        raise HTTPException(404, "Design not found")
+    state = get_screen_state(screen)
+    state.matrix = design["matrix"]
+    state.color_matrix = None
+    state.photo_url = None
+    state.mode = "matrix_push"
+    _schedule_revert(state, screen, duration)
+    await _broadcast_screen(state)
+    return {"status": "ok"}
+
+
+@app.post("/api/designs/{design_id}/queue")
+async def queue_design(design_id: int, body: DesignQueueAdd, screen: str = Query(default="main")):
+    design = await database.get_design(design_id)
+    if not design:
+        raise HTTPException(404, "Design not found")
+    state = get_screen_state(screen)
+    item_id = await database.add_playlist_item(
+        screen, "matrix", {"matrix": design["matrix"], "name": design["name"]}, body.duration
+    )
+    state.playlist_items = await database.get_playlist_items(screen)
+    return {"status": "ok", "item_id": item_id}
 
 
 # ── Global settings ───────────────────────────────────────────────────────────

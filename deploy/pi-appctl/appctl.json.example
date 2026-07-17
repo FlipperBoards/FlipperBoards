@@ -1,0 +1,22 @@
+{
+  "mqtt": {
+    "host": "192.168.1.50",
+    "port": 1883,
+    "username": "",
+    "password": ""
+  },
+  "device_name": "Living Room TV",
+  "ha_discovery": true,
+  "apps": [
+    {
+      "id": "flipperboards",
+      "name": "FlipperBoards",
+      "units": ["flipperboards-kiosk.service"]
+    },
+    {
+      "id": "dynaframe",
+      "name": "DynaFrame",
+      "units": ["dynaframe.service"]
+    }
+  ]
+}

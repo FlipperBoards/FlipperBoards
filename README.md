@@ -38,7 +38,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
 # Clone and set up
-git clone https://github.com/mikekmiller/flipperboards
+git clone https://github.com/FlipperBoards/FlipperBoards
 cd FlipperBoards
 chmod +x setup.sh && ./setup.sh
 ```
@@ -75,7 +75,7 @@ sudo systemctl restart flipperboards  # restart after config change
 **Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine + Docker Compose (Linux)
 
 ```bash
-git clone https://github.com/mikekmiller/flipperboards
+git clone https://github.com/FlipperBoards/FlipperBoards
 cd FlipperBoards
 docker compose up -d
 ```
@@ -92,6 +92,35 @@ docker compose restart         # restart
 docker compose pull && docker compose up -d  # update
 docker compose down            # stop
 ```
+
+---
+
+### Option 3 — Unraid
+
+Install from Community Applications (search "FlipperBoards"), or add the
+template manually: **Docker → Add Container → Template** and point at
+`unraid/FlipperBoards.xml` from this repo. All data lives in
+`/mnt/user/appdata/flipperboards`.
+
+---
+
+### Kiosk display clients
+
+The server can run anywhere (Unraid, Docker, a Pi) — anything with a browser
+can be a display. Two purpose-built clients are included:
+
+| Client | Where | Setup |
+|--------|-------|-------|
+| **Pi kiosk** | Raspberry Pi wired to a TV — boots straight into fullscreen Chromium | [`deploy/pi-kiosk/`](deploy/pi-kiosk/) |
+| **Android app** | Android TV, tablets, cheap HDMI sticks | [`android/`](android/) — APK built by CI |
+
+Both point at the server over the network; the display updates live via
+WebSocket.
+
+Sharing the Pi with other apps (e.g. a DynaFrame photo frame)? The MQTT
+[app controller](deploy/pi-appctl/) switches the TV between FlipperBoards
+and other systemd-managed apps — one at a time — and shows up in Home
+Assistant automatically.
 
 ---
 
