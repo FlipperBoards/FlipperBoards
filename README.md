@@ -117,6 +117,11 @@ can be a display. Two purpose-built clients are included:
 Both point at the server over the network; the display updates live via
 WebSocket.
 
+Sharing the Pi with other apps (e.g. a DynaFrame photo frame)? The MQTT
+[app controller](deploy/pi-appctl/) switches the TV between FlipperBoards
+and other systemd-managed apps — one at a time — and shows up in Home
+Assistant automatically.
+
 ---
 
 ### Accessing the app
