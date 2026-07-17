@@ -95,6 +95,30 @@ docker compose down            # stop
 
 ---
 
+### Option 3 — Unraid
+
+Install from Community Applications (search "FlipperBoards"), or add the
+template manually: **Docker → Add Container → Template** and point at
+`unraid/FlipperBoards.xml` from this repo. All data lives in
+`/mnt/user/appdata/flipperboards`.
+
+---
+
+### Kiosk display clients
+
+The server can run anywhere (Unraid, Docker, a Pi) — anything with a browser
+can be a display. Two purpose-built clients are included:
+
+| Client | Where | Setup |
+|--------|-------|-------|
+| **Pi kiosk** | Raspberry Pi wired to a TV — boots straight into fullscreen Chromium | [`deploy/pi-kiosk/`](deploy/pi-kiosk/) |
+| **Android app** | Android TV, tablets, cheap HDMI sticks | [`android/`](android/) — APK built by CI |
+
+Both point at the server over the network; the display updates live via
+WebSocket.
+
+---
+
 ### Accessing the app
 
 Once running (either option), open these URLs — replace `<ip>` with your Pi's IP or `localhost` if running locally:
