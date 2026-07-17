@@ -1,7 +1,7 @@
 services:
   flipperboards:
     # Pre-built image from GitHub Container Registry (recommended)
-    image: ghcr.io/mikekmiller/flipperboards:latest
+    image: ghcr.io/flipperboards/flipperboards:latest
     # To build from source instead, comment out 'image' and uncomment:
     # build: .
     ports:

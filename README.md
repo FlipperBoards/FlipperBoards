@@ -38,7 +38,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
 # Clone and set up
-git clone https://github.com/mikekmiller/flipperboards
+git clone https://github.com/FlipperBoards/FlipperBoards
 cd FlipperBoards
 chmod +x setup.sh && ./setup.sh
 ```
@@ -75,7 +75,7 @@ sudo systemctl restart flipperboards  # restart after config change
 **Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine + Docker Compose (Linux)
 
 ```bash
-git clone https://github.com/mikekmiller/flipperboards
+git clone https://github.com/FlipperBoards/FlipperBoards
 cd FlipperBoards
 docker compose up -d
 ```

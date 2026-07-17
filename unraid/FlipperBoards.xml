@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>FlipperBoards</Name>
-  <Repository>ghcr.io/mikekmiller/flipperboards:latest</Repository>
+  <Repository>ghcr.io/flipperboards/flipperboards:latest</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/MikeKMiller/FlipperBoards/issues</Support>
-  <Project>https://github.com/MikeKMiller/FlipperBoards</Project>
+  <Support>https://github.com/FlipperBoards/FlipperBoards/issues</Support>
+  <Project>https://github.com/FlipperBoards/FlipperBoards</Project>
   <Overview>
     FlipperBoards is a self-hosted split-flap display simulator and controller.
     Show clocks, weather, scrolling text, images, and hand-crafted designs on a
@@ -18,8 +18,8 @@
   </Overview>
   <Category>Tools: MediaApp:Video</Category>
   <WebUI>http://[IP]:[PORT:8000]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/MikeKMiller/FlipperBoards/main/unraid/FlipperBoards.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/MikeKMiller/FlipperBoards/main/unraid/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/FlipperBoards/FlipperBoards/main/unraid/FlipperBoards.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/FlipperBoards/FlipperBoards/main/unraid/icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
