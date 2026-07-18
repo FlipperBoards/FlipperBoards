@@ -26,7 +26,11 @@ export default function SplitFlapDisplay({
   sweepNonce = 0,          // increments when the server requests a full-board sweep
 }) {
   const prevMatrixRef = useRef([])
-  const prevSweepRef = useRef(sweepNonce)
+  // Idempotence cache: React may re-invoke the memo for the same commit
+  // (StrictMode double render, concurrent bailouts). Keyed on the exact
+  // (matrix, sweepNonce) identity so re-invocation returns the cached map
+  // instead of re-diffing against already-updated refs.
+  const staggerCacheRef = useRef({ forMatrix: null, forSweep: -1, map: [] })
 
   const normalizedMatrix = useMemo(() => {
     const result = []
@@ -42,8 +46,11 @@ export default function SplitFlapDisplay({
   }, [matrix, rows, cols])
 
   const staggerMap = useMemo(() => {
-    const sweeping = sweepNonce !== prevSweepRef.current
-    prevSweepRef.current = sweepNonce
+    const cache = staggerCacheRef.current
+    if (cache.forMatrix === normalizedMatrix && cache.forSweep === sweepNonce) {
+      return cache.map
+    }
+    const sweeping = cache.forSweep !== -1 && sweepNonce !== cache.forSweep
     const map = []
     for (let r = 0; r < rows; r++) {
       const row = []
@@ -55,6 +62,7 @@ export default function SplitFlapDisplay({
       map.push(row)
     }
     prevMatrixRef.current = normalizedMatrix
+    staggerCacheRef.current = { forMatrix: normalizedMatrix, forSweep: sweepNonce, map }
     return map
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedMatrix, sweepNonce])

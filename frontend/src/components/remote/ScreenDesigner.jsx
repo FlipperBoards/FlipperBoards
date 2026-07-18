@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { CHARS, COLOR_HEX, COLOR_NAMES, isColorCode, codeToChar } from '../../utils/charmap'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 import { renderIconToTiles } from '../../utils/iconStamp'
 import { ICON_CATEGORIES, ALL_ICONS } from '../../data/icons'
 import * as FaSolid from '@fortawesome/free-solid-svg-icons'
@@ -57,6 +59,8 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
   const [pushFeedback, setPushFeedback] = useState('')
   const [pushDuration, setPushDuration] = useState('')
   const [queueDurations, setQueueDurations] = useState({})   // keyed by design id
+  const [busy, setBusy] = useState(false)
+  const showToast = useToast()
 
   // ── Icon stamp state ──────────────────────────────────────────────────────────
   const [stampSearch, setStampSearch]         = useState('')
@@ -163,30 +167,37 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
   // ── Push now ────────────────────────────────────────────────────────────────
 
   const pushNow = async () => {
+    if (busy) return
     const dur = pushDuration !== '' ? parseInt(pushDuration, 10) : null
-    const durQs = dur !== null ? `&duration=${dur}` : ''
-    await fetch(`/api/display/matrix${qs}${durQs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matrix, duration: dur }),
-    })
-    setPushFeedback('sent')
-    setTimeout(() => setPushFeedback(''), 2000)
+    setBusy(true)
+    try {
+      await apiJson(`/api/display/matrix${qs}`, 'POST', { matrix, duration: dur })
+      setPushFeedback('sent')
+      setTimeout(() => setPushFeedback(''), 2000)
+    } catch (err) {
+      showToast(`Push failed: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   // ── Save ────────────────────────────────────────────────────────────────────
 
   const saveDesign = async () => {
     if (!designName.trim()) { setSaveFeedback('Name required'); return }
-    await fetch(`/api/designs${qs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: designName.trim(), matrix }),
-    })
-    setSaveFeedback('saved')
-    setTimeout(() => setSaveFeedback(''), 2000)
-    setDesignName('')
-    loadDesigns()
+    if (busy) return
+    setBusy(true)
+    try {
+      await apiJson(`/api/designs${qs}`, 'POST', { name: designName.trim(), matrix })
+      setSaveFeedback('saved')
+      setTimeout(() => setSaveFeedback(''), 2000)
+      setDesignName('')  // only cleared on success
+      loadDesigns()
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   // ── Saved design actions ────────────────────────────────────────────────────
@@ -194,20 +205,29 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
   const loadDesign  = (d) => setMatrix(d.matrix.map(r => [...r]))
 
   const pushDesign  = async (d) => {
-    await fetch(`/api/designs/${d.id}/push${qs}`, { method: 'POST' })
+    try {
+      await apiFetch(`/api/designs/${d.id}/push${qs}`, { method: 'POST' })
+    } catch (err) {
+      showToast(`Push failed: ${err.message}`)
+    }
   }
 
   const queueDesign = async (d) => {
     const dur = parseInt(queueDurations[d.id] || '30', 10)
-    await fetch(`/api/designs/${d.id}/queue${qs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ duration: dur }),
-    })
+    try {
+      await apiJson(`/api/designs/${d.id}/queue${qs}`, 'POST', { duration: dur })
+      showToast(`"${d.name}" added to the queue`, 'success')
+    } catch (err) {
+      showToast(`Queue failed: ${err.message}`)
+    }
   }
 
   const deleteDesign = async (d) => {
-    await fetch(`/api/designs/${d.id}`, { method: 'DELETE' })
+    try {
+      await apiFetch(`/api/designs/${d.id}`, { method: 'DELETE' })
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`)
+    }
     loadDesigns()
   }
 

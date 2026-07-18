@@ -5,7 +5,7 @@ import TextInput from './TextInput'
 import ModeSelector from './ModeSelector'
 import SettingsPanel from './SettingsPanel'
 import ImageUpload from './ImageUpload'
-import ImagePlaylist from './ImagePlaylist'
+import UniversalPlaylist from './UniversalPlaylist'
 import ScreenManager from './ScreenManager'
 import ScreenDesigner from './ScreenDesigner'
 import { useDisplayState } from '../../hooks/useDisplayState'
@@ -120,7 +120,7 @@ export default function RemoteControl() {
     setSearchParams(sid === 'main' ? {} : { screen: sid })
   }, [setSearchParams])
 
-  const bgColor        = appSettings.bg_color        || '#111111'
+  const bgColor        = appSettings.bg_color        || '#1a1a1a'
   const tileBgColor    = appSettings.tile_bg_color   || '#2a2a2a'
   const tileColor      = appSettings.tile_color      || '#ffffff'
   const dividerWidth   = parseInt(appSettings.divider_width || '4', 10)
@@ -272,7 +272,7 @@ export default function RemoteControl() {
             />
           )}
           {activeTab === 'playlist' && (
-            <ImagePlaylist
+            <UniversalPlaylist
               rows={rows}
               cols={cols}
               screenId={activeScreenId}

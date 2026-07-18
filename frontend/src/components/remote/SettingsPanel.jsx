@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import { apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 const TIMEZONES = [
   'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
@@ -47,20 +49,22 @@ function Field({ label, children }) {
 export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
   const [s, setS] = useState(initialSettings || {})
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const showToast = useToast()
 
   useEffect(() => { setS(initialSettings || {}) }, [initialSettings])
 
   const set = (key, value) => setS(prev => ({ ...prev, [key]: value }))
 
   const save = async () => {
-    await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    if (saving) return
+    setSaving(true)
+    try {
+      await apiJson('/api/settings', 'PUT', {
         rotation_interval: Number(s.rotation_interval) || 30,
         tile_color:        s.tile_color        || '#ffffff',
-        bg_color:          s.bg_color          || '#111111',
-        tile_bg_color:     s.tile_bg_color     || '#222222',
+        bg_color:          s.bg_color          || '#1a1a1a',
+        tile_bg_color:     s.tile_bg_color     || '#2a2a2a',
         timezone:          s.timezone          || 'UTC',
         clock_format:      s.clock_format      || '12h',
         show_date:         s.show_date !== 'false',
@@ -81,11 +85,15 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         mqtt_password:     s.mqtt_password    || '',
         mqtt_base_topic:   s.mqtt_base_topic  || 'flipperboards',
         mqtt_ha_discovery: s.mqtt_ha_discovery !== 'false',
-      }),
-    })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-    onUpdate()
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onUpdate()
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const applyPreset = (preset) =>
@@ -309,10 +317,11 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
 
       <button
         onClick={save}
+        disabled={saving}
         className="fb-btn-primary w-full py-3"
         style={saved ? { background: '#16a34a' } : {}}
       >
-        {saved ? '✓ Saved' : 'Save Settings'}
+        {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Settings'}
       </button>
     </div>
   )

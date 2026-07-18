@@ -1,13 +1,15 @@
 import { useEffect, useRef, useCallback } from 'react'
 
-export function useWebSocket(onMessage, screenId = 'main') {
+export function useWebSocket(onMessage, screenId = 'main', onConnectionChange = null) {
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
   const destroyedRef = useRef(false)
   const onMessageRef = useRef(onMessage)
   const screenIdRef = useRef(screenId)
+  const onConnectionChangeRef = useRef(onConnectionChange)
   onMessageRef.current = onMessage
   screenIdRef.current = screenId
+  onConnectionChangeRef.current = onConnectionChange
 
   const connect = useCallback(() => {
     if (destroyedRef.current) return
@@ -23,6 +25,7 @@ export function useWebSocket(onMessage, screenId = 'main') {
         clearTimeout(reconnectTimer.current)
         reconnectTimer.current = null
       }
+      onConnectionChangeRef.current?.(true)
     }
 
     ws.onmessage = (evt) => {
@@ -35,6 +38,7 @@ export function useWebSocket(onMessage, screenId = 'main') {
     }
 
     ws.onclose = () => {
+      onConnectionChangeRef.current?.(false)
       if (!destroyedRef.current) {
         reconnectTimer.current = setTimeout(connect, 2000)
       }

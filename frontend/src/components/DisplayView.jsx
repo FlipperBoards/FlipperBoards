@@ -62,7 +62,12 @@ export default function DisplayView() {
 
   const handleClick = useCallback(() => {
     if (!audioUnlocked) { unlockAudio(); setAudioUnlocked(true) }
-  }, [audioUnlocked])
+    // Kiosk hides all chrome including the fullscreen button — browsers only
+    // grant fullscreen on a user gesture, so the first tap doubles as that.
+    if (kiosk && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {})
+    }
+  }, [audioUnlocked, kiosk])
 
   const toggleFullscreen = useCallback(async () => {
     if (!document.fullscreenElement) {
@@ -74,7 +79,7 @@ export default function DisplayView() {
     }
   }, [])
 
-  const bgColor = appSettings.bg_color || '#111111'
+  const bgColor = appSettings.bg_color || '#1a1a1a'
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
   const soundParam = searchParams.get('sound')

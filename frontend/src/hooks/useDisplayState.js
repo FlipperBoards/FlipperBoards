@@ -15,7 +15,6 @@ export function useDisplayState(screenId = 'main') {
   const [sweepNonce, setSweepNonce] = useState(0)
 
   const handleMessage = useCallback((data) => {
-    setConnected(true)
     const forMe = !data.screen_id || data.screen_id === screenId
     switch (data.type) {
       case 'display_update':
@@ -33,8 +32,8 @@ export function useDisplayState(screenId = 'main') {
         if (forMe) {
           setColorMatrix(data.color_matrix || null)
           setPhotoUrl(null)
-          setRows(data.rows || rows)
-          setCols(data.cols || cols)
+          setRows(r => data.rows || r)
+          setCols(c => data.cols || c)
           setMode('image_push')
         }
         break
@@ -42,8 +41,8 @@ export function useDisplayState(screenId = 'main') {
         if (forMe) {
           setPhotoUrl(data.image_url || null)
           setColorMatrix(null)
-          setRows(data.rows || rows)
-          setCols(data.cols || cols)
+          setRows(r => data.rows || r)
+          setCols(c => data.cols || c)
           setMode('photo_push')
         }
         break
@@ -57,9 +56,11 @@ export function useDisplayState(screenId = 'main') {
         setScreens(data.screens || [])
         break
     }
-  }, [screenId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screenId])
 
-  useWebSocket(handleMessage, screenId)
+  // Connection state tracks the actual socket lifecycle — not message
+  // receipt — so indicators go red when the server dies or Wi-Fi drops.
+  useWebSocket(handleMessage, screenId, setConnected)
 
   return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, sweepNonce }
 }

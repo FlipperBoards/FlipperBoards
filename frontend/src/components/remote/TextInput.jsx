@@ -1,105 +1,68 @@
 import React, { useState, useEffect } from 'react'
-
-function DurationPicker({ value, onChange }) {
-  const presets = [
-    { label: 'Until changed', v: '' },
-    { label: '10s',  v: '10' },
-    { label: '30s',  v: '30' },
-    { label: '1 min', v: '60' },
-    { label: '5 min', v: '300' },
-  ]
-  const isPreset = presets.some(p => p.v === value)
-  const [custom, setCustom] = useState(false)
-
-  const handleSelect = v => {
-    if (v === '__custom__') { setCustom(true); onChange('60') }
-    else { setCustom(false); onChange(v) }
-  }
-
-  if (custom || (!isPreset && value !== '')) {
-    return (
-      <div className="flex items-center gap-1.5">
-        <label className="section-label whitespace-nowrap">Display for</label>
-        <input
-          type="number" min={1} max={86400}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          className="w-16 text-center fb-input py-1"
-        />
-        <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>sec</span>
-        <button
-          type="button"
-          onClick={() => { setCustom(false); onChange('') }}
-          className="text-[10px] font-mono opacity-50 hover:opacity-100"
-          style={{ color: 'var(--text-3)' }}
-        >
-          ×
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <label className="section-label whitespace-nowrap">Display for</label>
-      <select
-        value={value}
-        onChange={e => handleSelect(e.target.value)}
-        className="fb-input py-1 text-[11px]"
-      >
-        {presets.map(p => <option key={p.v} value={p.v}>{p.label}</option>)}
-        <option value="__custom__">Custom…</option>
-      </select>
-    </div>
-  )
-}
+import DurationPicker from './DurationPicker'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 export default function TextInput({ screenId = 'main', onRefresh }) {
   const [text, setText] = useState('')
   const [messages, setMessages] = useState([])
   const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
   const [pushDuration, setPushDuration] = useState('')   // '' = until changed
   const [rotDuration, setRotDuration] = useState(30)     // rotation queue hold time
+  const showToast = useToast()
 
   const qs = `?screen=${encodeURIComponent(screenId)}`
 
   const fetchMessages = async () => {
-    const res = await fetch(`/api/messages${qs}`)
-    const data = await res.json()
-    setMessages(data)
+    try {
+      setMessages(await apiFetch(`/api/messages${qs}`) || [])
+    } catch {
+      // non-fatal: queue list just stays empty
+    }
   }
 
-  useEffect(() => { fetchMessages() }, [screenId])
+  useEffect(() => { fetchMessages() }, [screenId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pushText = async (e) => {
     e.preventDefault()
-    if (!text.trim()) return
-    await fetch(`/api/display/text${qs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    if (!text.trim() || busy) return
+    setBusy(true)
+    try {
+      await apiJson(`/api/display/text${qs}`, 'POST', {
         text,
         duration: pushDuration !== '' ? parseInt(pushDuration, 10) : null,
-      }),
-    })
-    setStatus('sent')
-    setTimeout(() => setStatus(''), 2000)
-    setText('')
+      })
+      setStatus('sent')
+      setTimeout(() => setStatus(''), 2000)
+      setText('')  // only cleared on success — a failed send keeps the draft
+    } catch (err) {
+      showToast(`Send failed: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const addMessage = async () => {
-    if (!text.trim()) return
-    await fetch(`/api/messages${qs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, duration: rotDuration }),
-    })
-    setText('')
-    fetchMessages()
+    if (!text.trim() || busy) return
+    setBusy(true)
+    try {
+      await apiJson(`/api/messages${qs}`, 'POST', { text, duration: rotDuration })
+      setText('')
+      fetchMessages()
+    } catch (err) {
+      showToast(`Could not add message: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const deleteMessage = async (id) => {
-    await fetch(`/api/messages/${id}`, { method: 'DELETE' })
+    try {
+      await apiFetch(`/api/messages/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`)
+    }
     fetchMessages()
   }
 
@@ -133,11 +96,11 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
             type="submit"
             form="text-form"
             onClick={pushText}
-            disabled={!text.trim()}
+            disabled={!text.trim() || busy}
             className="fb-btn-primary text-[11px] px-4 py-1.5 flex-shrink-0"
             style={status === 'sent' ? { background: '#16a34a' } : {}}
           >
-            {status === 'sent' ? '✓ Sent' : 'Send Now'}
+            {busy ? 'Sending…' : status === 'sent' ? '✓ Sent' : 'Send Now'}
           </button>
         </div>
 
@@ -161,7 +124,7 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
           <button
             type="button"
             onClick={addMessage}
-            disabled={!text.trim()}
+            disabled={!text.trim() || busy}
             className="fb-btn-ghost text-[11px] px-3 py-1.5 flex-shrink-0"
           >
             + Rotation

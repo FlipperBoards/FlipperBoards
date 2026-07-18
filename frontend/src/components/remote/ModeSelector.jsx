@@ -1,4 +1,6 @@
 import React, { useState } from 'react'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 function ConfigField({ fieldKey, schema, value, onChange }) {
   if (schema.type === 'select') {
@@ -52,6 +54,7 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
   const [configuringMode, setConfiguringMode] = useState(null)
   const [configDraft, setConfigDraft] = useState({})
   const [configSaving, setConfigSaving] = useState(false)
+  const showToast = useToast()
 
   const qs = `?screen=${encodeURIComponent(screenId)}`
 
@@ -59,11 +62,12 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
     const modeData = modes.find(m => m.mode === mode)
     if (!modeData) return
     setSaving(true)
-    await fetch(`/api/modes/${mode}${qs}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, enabled: !currentEnabled, sort_order: modeData.sort_order, config: modeData.config || {} }),
-    })
+    try {
+      await apiJson(`/api/modes/${mode}${qs}`, 'PUT',
+                    { mode, enabled: !currentEnabled, sort_order: modeData.sort_order, config: modeData.config || {} })
+    } catch (err) {
+      showToast(`Mode update failed: ${err.message}`)
+    }
     setSaving(false)
     onUpdate()
   }
@@ -78,18 +82,23 @@ export default function ModeSelector({ modes, screenId = 'main', onUpdate }) {
     const modeData = modes.find(m => m.mode === configuringMode)
     if (!modeData) return
     setConfigSaving(true)
-    await fetch(`/api/modes/${configuringMode}${qs}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: configuringMode, enabled: modeData.enabled, sort_order: modeData.sort_order, config: configDraft }),
-    })
+    try {
+      await apiJson(`/api/modes/${configuringMode}${qs}`, 'PUT',
+                    { mode: configuringMode, enabled: modeData.enabled, sort_order: modeData.sort_order, config: configDraft })
+      setConfiguringMode(null)
+    } catch (err) {
+      showToast(`Config save failed: ${err.message}`)
+    }
     setConfigSaving(false)
-    setConfiguringMode(null)
     onUpdate()
   }
 
-  const nextMode    = () => fetch(`/api/display/next${qs}`,  { method: 'POST' })
-  const blankDisplay = () => fetch(`/api/display/blank${qs}`, { method: 'POST' })
+  const nextMode = () =>
+    apiFetch(`/api/display/next${qs}`, { method: 'POST' })
+      .catch(err => showToast(`Next failed: ${err.message}`))
+  const blankDisplay = () =>
+    apiFetch(`/api/display/blank${qs}`, { method: 'POST' })
+      .catch(err => showToast(`Blank failed: ${err.message}`))
 
   const configuringData = configuringMode ? modes.find(m => m.mode === configuringMode) : null
 

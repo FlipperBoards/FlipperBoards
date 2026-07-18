@@ -13,7 +13,8 @@ function getIntermediateChars(fromCode, toCode, maxCount = MAX_INTERMEDIATE) {
   let count = 0
   while (idx !== toCode && count < total) {
     idx = (idx + 1) % total
-    if (idx !== toCode && !(skipColors && isColorCode(idx))) {
+    // 70 is reserved (renders as a duplicate blank) — never show it mid-flip
+    if (idx !== toCode && idx !== 70 && !(skipColors && isColorCode(idx))) {
       steps.push(idx)
     }
     count++
@@ -48,6 +49,7 @@ export default function FlapTile({
   const [isFlipping, setIsFlipping] = useState(false)
   const [foldChar, setFoldChar] = useState(codeToChar(code))
   const [riseChar, setRiseChar] = useState(codeToChar(code))
+  const [stepId, setStepId] = useState(0)  // keys the fold/rise divs per step
   const prevCodeRef = useRef(code)
   const prevSweepRef = useRef(sweepNonce)
   const animTimers = useRef([])
@@ -88,7 +90,7 @@ export default function FlapTile({
       let guard = 0
       while (intermediates.length < want && guard < CHARS.length) {
         idx = (idx + 1) % CHARS.length
-        if (idx !== toCode && !isColorCode(idx)) intermediates.push(idx)
+        if (idx !== toCode && idx !== 70 && !isColorCode(idx)) intermediates.push(idx)
         guard++
       }
     } else {
@@ -102,6 +104,7 @@ export default function FlapTile({
         const t = setTimeout(() => {
           setFoldChar(codeToChar(stepCode))
           setRiseChar(codeToChar(stepCode))
+          setStepId(s => s + 1)
           setIsFlipping(true)
           if (soundEnabledRef.current && i === 0) playFlipSound()
           const t2 = setTimeout(() => {
@@ -122,6 +125,15 @@ export default function FlapTile({
     prevCodeRef.current = code
     // Consume any sweep arriving in this same commit — the tile is already flipping
     prevSweepRef.current = sweepNonce
+    // Color tiles snap: animating through the ring would flash characters
+    // (or multi-char color names) before the solid color appears
+    if (isColorCode(code) || isColorCode(fromCode)) {
+      animTimers.current.forEach(clearTimeout)
+      animTimers.current = []
+      setDisplayCode(code)
+      setIsFlipping(false)
+      return
+    }
     runFlipSequence(fromCode, code)
 
     return () => {
@@ -180,9 +192,11 @@ export default function FlapTile({
         <span style={{ ...textStyle, transform: 'translateY(-50%)' }}>{char}</span>
       </div>
 
-      {/* Fold-down animation — top half folding away */}
+      {/* Fold-down animation — top half folding away.
+          Keyed by step counter (not wall-clock) so unrelated re-renders
+          don't remount mid-animation and stutter the flip. */}
       {isFlipping && (
-        <div key={`fold-${foldChar}-${Date.now()}`} className="flap-fold animate"
+        <div key={`fold-${stepId}`} className="flap-fold animate"
           style={{ background: tileBgColor, color: tileColor, ...fontStyle }}>
           <span style={{ ...textStyle, transform: 'translateY(50%)' }}>{foldChar}</span>
         </div>
@@ -190,7 +204,7 @@ export default function FlapTile({
 
       {/* Rise animation — bottom half of next char appearing */}
       {isFlipping && (
-        <div key={`rise-${riseChar}-${Date.now()}`} className="flap-rise animate"
+        <div key={`rise-${stepId}`} className="flap-rise animate"
           style={{ background: tileBgColor, color: tileColor, ...fontStyle }}>
           <span style={{ ...textStyle, transform: 'translateY(-50%)' }}>{riseChar}</span>
         </div>

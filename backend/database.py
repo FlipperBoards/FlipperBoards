@@ -254,6 +254,7 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "news_sources": "[]",
         "calendar_ical_url": "",
         "sound_enabled": "true",
+        "flip_duration": "120",
         "divider_width": "4",
         "divider_color": "#111111",
         "physical_mode": "false",

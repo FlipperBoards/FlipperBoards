@@ -1,4 +1,6 @@
 import React, { useState } from 'react'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64)
@@ -14,36 +16,44 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
   const [editRows, setEditRows] = useState(6)
   const [editCols, setEditCols] = useState(22)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const showToast = useToast()
 
   const createScreen = async () => {
     if (!newName.trim()) return
     const id = slugify(newName) || `screen-${Date.now()}`
-    await fetch('/api/screens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name: newName.trim(), rows: newRows, cols: newCols }),
-    })
-    setCreating(false)
-    setNewName('')
-    onRefresh()
-    onSelectScreen(id)
+    try {
+      await apiJson('/api/screens', 'POST',
+                    { id, name: newName.trim(), rows: newRows, cols: newCols })
+      setCreating(false)
+      setNewName('')
+      onRefresh()
+      onSelectScreen(id)  // only navigate once the screen actually exists
+    } catch (err) {
+      showToast(`Could not create screen: ${err.message}`)
+    }
   }
 
   const saveEdit = async (sid) => {
-    await fetch(`/api/screens/${sid}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: editName, rows: editRows, cols: editCols }),
-    })
-    setEditingId(null)
-    onRefresh()
+    try {
+      await apiJson(`/api/screens/${sid}`, 'PUT',
+                    { name: editName, rows: editRows, cols: editCols })
+      setEditingId(null)
+      onRefresh()
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`)
+    }
   }
 
   const deleteScreen = async (sid) => {
-    await fetch(`/api/screens/${sid}`, { method: 'DELETE' })
-    setConfirmDelete(null)
-    if (activeScreenId === sid) onSelectScreen('main')
-    onRefresh()
+    try {
+      await apiFetch(`/api/screens/${sid}`, { method: 'DELETE' })
+      setConfirmDelete(null)
+      if (activeScreenId === sid) onSelectScreen('main')
+      onRefresh()
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`)
+      setConfirmDelete(null)
+    }
   }
 
   return (

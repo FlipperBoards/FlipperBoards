@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [items, setItems] = useState([])
@@ -15,6 +17,7 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [playing, setPlaying] = useState(false)
   const [editingDuration, setEditingDuration] = useState(null)
   const photoRef = useRef(null)
+  const showToast = useToast()
 
   const modeById = Object.fromEntries(availableModes.map(m => [m.id, m]))
 
@@ -57,8 +60,7 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
         if (!addPhoto) return
         const fd = new FormData()
         fd.append('file', addPhoto)
-        const res = await fetch('/api/upload', { method: 'POST', body: fd })
-        const { url } = await res.json()
+        const { url } = await apiFetch('/api/upload', { method: 'POST', body: fd })
         content = { url }
       } else if (addType === 'text') {
         content = { text: addText }
@@ -72,17 +74,16 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
       } else {
         content = { mode: addMode }
       }
-      await fetch(`/api/playlist${qs}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: addType, content, duration: addDuration }),
-      })
+      await apiJson(`/api/playlist${qs}`, 'POST',
+                    { type: addType, content, duration: addDuration })
       await load()
       setShowAdd(false)
       setAddText('')
       setAddPhoto(null)
       setAddHomeName('')
       setAddAwayName('')
+    } catch (err) {
+      showToast(`Could not add item: ${err.message}`)
     } finally {
       setSaving(false)
     }
@@ -90,23 +91,36 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
   const bumpScore = async (item, side, delta) => {
     const next = Math.max(0, (item.content?.[side] ?? 0) + delta)
-    await fetch(`/api/playlist/${item.id}${qs}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      await apiJson(`/api/playlist/${item.id}${qs}`, 'PUT', {
         type: 'scoreboard',
         content: { ...item.content, [side]: next },
         duration: item.duration,
-      }),
-    })
+      })
+    } catch (err) {
+      showToast(`Score update failed: ${err.message}`)
+    }
     await load()
   }
 
-  const remove = async (id) => { await fetch(`/api/playlist/${id}${qs}`, { method: 'DELETE' }); await load() }
-  const clear  = async () => {
+  const remove = async (id) => {
+    try {
+      await apiFetch(`/api/playlist/${id}${qs}`, { method: 'DELETE' })
+    } catch (err) {
+      showToast(`Remove failed: ${err.message}`)
+    }
+    await load()
+  }
+
+  const clear = async () => {
     if (!window.confirm(`Remove all ${items.length} item${items.length !== 1 ? 's' : ''}?`)) return
-    await fetch(`/api/playlist/clear${qs}`, { method: 'POST' })
-    setItems([])
+    try {
+      await apiFetch(`/api/playlist/clear${qs}`, { method: 'POST' })
+      setItems([])
+    } catch (err) {
+      showToast(`Clear failed: ${err.message}`)
+      await load()  // resync — the optimistic empty list would be a lie
+    }
   }
 
   const move = async (idx, dir) => {
@@ -114,29 +128,36 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     const swapIdx = idx + dir
     if (swapIdx < 0 || swapIdx >= newItems.length) return
     ;[newItems[idx], newItems[swapIdx]] = [newItems[swapIdx], newItems[idx]]
-    setItems(newItems)
-    await fetch(`/api/playlist/reorder${qs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: newItems.map(i => i.id) }),
-    })
+    setItems(newItems)  // optimistic
+    try {
+      await apiJson(`/api/playlist/reorder${qs}`, 'POST',
+                    { ids: newItems.map(i => i.id) })
+    } catch (err) {
+      showToast(`Reorder failed: ${err.message}`)
+      await load()  // rollback to server order
+    }
   }
 
   const saveDuration = async (item, newDuration) => {
     const dur = Math.max(5, parseInt(newDuration, 10) || 30)
-    await fetch(`/api/playlist/${item.id}${qs}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: item.type, content: item.content, duration: dur }),
-    })
+    try {
+      await apiJson(`/api/playlist/${item.id}${qs}`, 'PUT',
+                    { type: item.type, content: item.content, duration: dur })
+    } catch (err) {
+      showToast(`Duration update failed: ${err.message}`)
+    }
     setEditingDuration(null)
     await load()
   }
 
   const playNow = async () => {
-    await fetch(`/api/playlist/play${qs}`, { method: 'POST' })
-    setPlaying(true)
-    setTimeout(() => setPlaying(false), 2000)
+    try {
+      await apiFetch(`/api/playlist/play${qs}`, { method: 'POST' })
+      setPlaying(true)
+      setTimeout(() => setPlaying(false), 2000)
+    } catch (err) {
+      showToast(`Play failed: ${err.message}`)
+    }
   }
 
   return (
