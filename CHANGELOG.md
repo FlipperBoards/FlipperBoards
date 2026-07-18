@@ -2,7 +2,9 @@
 
 All notable changes to FlipperBoards are documented here.
 
-## Unreleased
+## 0.1.0 — 2026-07-18
+
+First tagged release.
 
 ### Added
 - Sports mode: live game scores from ESPN's public API (NFL, NBA, MLB, NHL,
