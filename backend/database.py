@@ -1,5 +1,6 @@
 import aiosqlite
 import json
+from contextlib import asynccontextmanager
 from config import settings
 
 DB_PATH = settings.db_path
@@ -7,10 +8,20 @@ DB_PATH = settings.db_path
 DEFAULT_ORG_ID = 1
 
 
+@asynccontextmanager
+async def _connect():
+    """Shared connection factory: WAL journal + busy timeout so concurrent
+    reads/writes wait instead of raising 'database is locked'."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
+        yield db
+
+
 # ── Schema init & migration ───────────────────────────────────────────────────
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await _create_tables(db)
         await _migrate(db)
         await _notify_plugins(db)
@@ -129,6 +140,13 @@ async def _create_tables(db: aiosqlite.Connection):
             created_at TEXT    NOT NULL DEFAULT (datetime('now'))
         )
     """)
+
+    # Lookup indexes — these tables are queried by (org_id, screen_id)/folder
+    # on every rotation tick and remote-control fetch
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_playlist_screen ON playlist_items(org_id, screen_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_messages_screen ON text_messages(org_id, screen_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_designs_screen  ON designs(org_id, screen_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_images_folder   ON image_library(org_id, folder)")
 
 
 async def _migrate(db: aiosqlite.Connection):
@@ -275,7 +293,7 @@ async def _seed_defaults(db: aiosqlite.Connection):
 # ── Global settings ───────────────────────────────────────────────────────────
 
 async def get_settings(org_id: int = DEFAULT_ORG_ID) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT key, value FROM display_settings WHERE org_id = ?", (org_id,)
@@ -285,7 +303,7 @@ async def get_settings(org_id: int = DEFAULT_ORG_ID) -> dict:
 
 
 async def update_setting(key: str, value: str, org_id: int = DEFAULT_ORG_ID):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "INSERT OR REPLACE INTO display_settings (org_id, key, value) VALUES (?, ?, ?)",
             (org_id, key, value)
@@ -296,7 +314,7 @@ async def update_setting(key: str, value: str, org_id: int = DEFAULT_ORG_ID):
 # ── Organizations ─────────────────────────────────────────────────────────────
 
 async def get_organization(org_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, name, slug, created_at FROM organizations WHERE id = ?", (org_id,)
@@ -308,7 +326,7 @@ async def get_organization(org_id: int) -> dict | None:
 # ── Screens ───────────────────────────────────────────────────────────────────
 
 async def get_screens(org_id: int = DEFAULT_ORG_ID) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, name, rows, cols FROM screens WHERE org_id = ? ORDER BY id",
@@ -319,7 +337,7 @@ async def get_screens(org_id: int = DEFAULT_ORG_ID) -> list[dict]:
 
 
 async def get_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, name, rows, cols FROM screens WHERE id = ? AND org_id = ?",
@@ -332,7 +350,7 @@ async def get_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> dict | Non
 async def create_screen(
     screen_id: str, name: str, rows: int = 6, cols: int = 22, org_id: int = DEFAULT_ORG_ID
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "INSERT OR IGNORE INTO screens (id, org_id, name, rows, cols) VALUES (?, ?, ?, ?, ?)",
             (screen_id, org_id, name, rows, cols)
@@ -353,7 +371,7 @@ async def create_screen(
 async def update_screen(
     screen_id: str, name: str, rows: int, cols: int, org_id: int = DEFAULT_ORG_ID
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE screens SET name=?, rows=?, cols=? WHERE id=? AND org_id=?",
             (name, rows, cols, screen_id, org_id)
@@ -364,7 +382,7 @@ async def update_screen(
 async def delete_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID):
     if screen_id == "main":
         raise ValueError("Cannot delete the main screen")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "DELETE FROM screens WHERE id=? AND org_id=?", (screen_id, org_id)
         )
@@ -383,7 +401,7 @@ async def delete_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID):
 # ── Per-screen modes ──────────────────────────────────────────────────────────
 
 async def get_modes(screen_id: str = "main", org_id: int = DEFAULT_ORG_ID) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT mode, config, enabled, sort_order FROM screen_modes "
@@ -411,7 +429,7 @@ async def update_mode(
     screen_id: str, mode: str, enabled: bool, sort_order: int, config: dict,
     org_id: int = DEFAULT_ORG_ID,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "INSERT OR REPLACE INTO screen_modes "
             "(org_id, screen_id, mode, config, enabled, sort_order) VALUES (?,?,?,?,?,?)",
@@ -425,7 +443,7 @@ async def update_mode(
 async def get_text_messages(
     screen_id: str = "main", org_id: int = DEFAULT_ORG_ID
 ) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, text, duration, sort_order FROM text_messages "
@@ -439,7 +457,7 @@ async def get_text_messages(
 async def add_text_message(
     screen_id: str, text: str, duration: int = 30, org_id: int = DEFAULT_ORG_ID
 ) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "INSERT INTO text_messages (org_id, screen_id, text, duration, sort_order) "
             "VALUES (?, ?, ?, ?, "
@@ -452,7 +470,7 @@ async def add_text_message(
 
 
 async def delete_text_message(msg_id: int, org_id: int = DEFAULT_ORG_ID):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "DELETE FROM text_messages WHERE id = ? AND org_id = ?", (msg_id, org_id)
         )
@@ -464,7 +482,7 @@ async def delete_text_message(msg_id: int, org_id: int = DEFAULT_ORG_ID):
 async def get_playlist_items(
     screen_id: str, org_id: int = DEFAULT_ORG_ID
 ) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, type, content, duration, sort_order FROM playlist_items "
@@ -488,7 +506,7 @@ async def add_playlist_item(
     screen_id: str, item_type: str, content: dict, duration: int,
     org_id: int = DEFAULT_ORG_ID,
 ) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "INSERT INTO playlist_items (org_id, screen_id, type, content, duration, sort_order) "
             "VALUES (?, ?, ?, ?, ?, "
@@ -504,7 +522,7 @@ async def update_playlist_item(
     item_id: int, item_type: str, content: dict, duration: int,
     org_id: int = DEFAULT_ORG_ID,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE playlist_items SET type=?, content=?, duration=? WHERE id=? AND org_id=?",
             (item_type, json.dumps(content), duration, item_id, org_id)
@@ -513,7 +531,7 @@ async def update_playlist_item(
 
 
 async def remove_playlist_item(item_id: int, org_id: int = DEFAULT_ORG_ID):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "DELETE FROM playlist_items WHERE id=? AND org_id=?", (item_id, org_id)
         )
@@ -521,7 +539,7 @@ async def remove_playlist_item(item_id: int, org_id: int = DEFAULT_ORG_ID):
 
 
 async def clear_playlist_items(screen_id: str, org_id: int = DEFAULT_ORG_ID):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "DELETE FROM playlist_items WHERE screen_id=? AND org_id=?", (screen_id, org_id)
         )
@@ -531,7 +549,7 @@ async def clear_playlist_items(screen_id: str, org_id: int = DEFAULT_ORG_ID):
 async def reorder_playlist_items(
     screen_id: str, ordered_ids: list[int], org_id: int = DEFAULT_ORG_ID
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         for order, item_id in enumerate(ordered_ids):
             await db.execute(
                 "UPDATE playlist_items SET sort_order=? WHERE id=? AND screen_id=? AND org_id=?",
@@ -545,7 +563,7 @@ async def reorder_playlist_items(
 async def add_image(filename: str, name: str = '', folder: str = '',
                     size: int = 0, content_type: str = 'image/jpeg',
                     org_id: int = DEFAULT_ORG_ID) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             "INSERT INTO image_library (org_id, filename, name, folder, size, content_type) "
             "VALUES (?,?,?,?,?,?)",
@@ -556,7 +574,7 @@ async def add_image(filename: str, name: str = '', folder: str = '',
 
 
 async def get_images(folder: str | None = None, org_id: int = DEFAULT_ORG_ID) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         if folder is not None:
             sql = ("SELECT id, filename, name, folder, size, content_type, created_at "
@@ -571,7 +589,7 @@ async def get_images(folder: str | None = None, org_id: int = DEFAULT_ORG_ID) ->
 
 
 async def get_image(image_id: int, org_id: int = DEFAULT_ORG_ID) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, filename, name, folder, size, content_type, created_at "
@@ -593,14 +611,14 @@ async def update_image(image_id: int, name: str | None = None, folder: str | Non
         return
     cols = ', '.join(f"{k}=?" for k in updates)
     vals = list(updates.values()) + [image_id, org_id]
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(f"UPDATE image_library SET {cols} WHERE id=? AND org_id=?", vals)
         await db.commit()
 
 
 async def delete_image(image_id: int, org_id: int = DEFAULT_ORG_ID) -> str | None:
     """Removes the DB record and returns the filename (for disk cleanup), or None if not found."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT filename FROM image_library WHERE id=? AND org_id=?", (image_id, org_id)
         ) as cur:
@@ -616,7 +634,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"}
 
 async def remove_playlist_items_by_image_url(image_url: str, org_id: int = DEFAULT_ORG_ID):
     """Delete playlist items whose content JSON contains the given image URL."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "DELETE FROM playlist_items WHERE org_id=? AND content LIKE ?",
             (org_id, f'%{image_url}%'),
@@ -625,7 +643,7 @@ async def remove_playlist_items_by_image_url(image_url: str, org_id: int = DEFAU
 
 
 async def get_designs(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, name, matrix, created_at FROM designs "
@@ -641,7 +659,7 @@ async def get_designs(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> list[dict
 
 
 async def get_design(design_id: int, org_id: int = DEFAULT_ORG_ID) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, name, matrix, created_at FROM designs WHERE id=? AND org_id=?",
@@ -655,7 +673,7 @@ async def get_design(design_id: int, org_id: int = DEFAULT_ORG_ID) -> dict | Non
 
 
 async def add_design(screen_id: str, name: str, matrix: list, org_id: int = DEFAULT_ORG_ID) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             "INSERT INTO designs (org_id, screen_id, name, matrix) VALUES (?,?,?,?)",
             (org_id, screen_id, name, json.dumps(matrix)),
@@ -665,7 +683,7 @@ async def add_design(screen_id: str, name: str, matrix: list, org_id: int = DEFA
 
 
 async def update_design(design_id: int, name: str, matrix: list, org_id: int = DEFAULT_ORG_ID):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE designs SET name=?, matrix=? WHERE id=? AND org_id=?",
             (name, json.dumps(matrix), design_id, org_id),
@@ -674,7 +692,7 @@ async def update_design(design_id: int, name: str, matrix: list, org_id: int = D
 
 
 async def delete_design(design_id: int, org_id: int = DEFAULT_ORG_ID):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute("DELETE FROM designs WHERE id=? AND org_id=?", (design_id, org_id))
         await db.commit()
 
@@ -682,7 +700,7 @@ async def delete_design(design_id: int, org_id: int = DEFAULT_ORG_ID):
 async def migrate_existing_uploads(upload_dir: str, org_id: int = DEFAULT_ORG_ID):
     """One-time: register files already on disk that have no DB record yet."""
     import os, mimetypes
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute("SELECT filename FROM image_library WHERE org_id=?", (org_id,)) as cur:
             known = {row[0] for row in await cur.fetchall()}
         rows = []

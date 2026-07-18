@@ -71,10 +71,19 @@ async def _fetch_events(ical_url: str, timezone: str) -> list:
     now = datetime.now(tz)
     events = []
 
-    # Simple iCal parser
+    # RFC 5545 line unfolding: continuation lines start with a space/tab and
+    # belong to the previous line (long SUMMARYs are folded by every provider)
+    unfolded: list[str] = []
+    for raw in content.splitlines():
+        if raw[:1] in (" ", "\t") and unfolded:
+            unfolded[-1] += raw[1:]
+        else:
+            unfolded.append(raw)
+
+    # Simple iCal parser (single events only — RRULE recurrences not expanded)
     current_event = {}
     in_event = False
-    for line in content.splitlines():
+    for line in unfolded:
         line = line.strip()
         if line == "BEGIN:VEVENT":
             in_event = True
@@ -99,12 +108,19 @@ async def _fetch_events(ical_url: str, timezone: str) -> list:
 
 
 def _parse_ical_dt(dt_str: str, tz) -> datetime | None:
-    dt_str = dt_str.replace("Z", "")
+    # A trailing Z means the timestamp is UTC — parse as UTC, then convert
+    # to the display timezone (stripping it silently shifts every event by
+    # the local UTC offset).
+    is_utc = dt_str.endswith("Z")
+    if is_utc:
+        dt_str = dt_str[:-1]
     formats = ["%Y%m%dT%H%M%S", "%Y%m%d"]
     for fmt in formats:
         try:
             dt = datetime.strptime(dt_str, fmt)
-            if dt.tzinfo is None:
+            if is_utc:
+                dt = pytz.utc.localize(dt).astimezone(tz)
+            else:
                 dt = tz.localize(dt)
             return dt
         except ValueError:

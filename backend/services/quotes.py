@@ -26,25 +26,27 @@ BUILTIN_QUOTES = [
     "IF YOU LOOK AT WHAT YOU HAVE IN LIFE, YOU'LL ALWAYS HAVE MORE. - OPRAH WINFREY",
 ]
 
-_quote_idx = 0
+# Per-screen rotation cursor
+_quote_idx: dict[str, int] = {}
 
 
-async def get_quote_matrix(rows: int, cols: int, custom_quotes: str = "") -> list[list[int]]:
-    global _quote_idx
+async def get_quote_matrix(rows: int, cols: int, custom_quotes: str = "",
+                           screen_id: str = "main") -> list[list[int]]:
+    idx = _quote_idx.get(screen_id, 0)
 
     # Use operator-supplied quotes when configured
     if custom_quotes.strip():
         pool = [q.strip() for q in custom_quotes.splitlines() if q.strip()]
         if pool:
-            quote = pool[_quote_idx % len(pool)]
-            _quote_idx += 1
+            quote = pool[idx % len(pool)]
+            _quote_idx[screen_id] = idx + 1
             return text_to_matrix(quote.upper(), rows, cols)
 
     # Try external API first
     quote = await _fetch_quote()
     if not quote:
-        quote = BUILTIN_QUOTES[_quote_idx % len(BUILTIN_QUOTES)]
-        _quote_idx += 1
+        quote = BUILTIN_QUOTES[idx % len(BUILTIN_QUOTES)]
+        _quote_idx[screen_id] = idx + 1
 
     return text_to_matrix(quote, rows, cols)
 

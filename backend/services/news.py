@@ -11,23 +11,27 @@ RSS_FEEDS = [
     "https://feeds.reuters.com/reuters/topNews",
 ]
 
-_cached_headlines: list[str] = []
-_cache_idx: int = 0
+# Per-screen so multiple boards in news mode don't leapfrog each other's cursor
+_cached_headlines: dict[str, list[str]] = {}
+_cache_idx: dict[str, int] = {}
 
 
 async def get_news_matrix(rows: int, cols: int, api_key: str = "",
-                           categories: list = None, sources: list = None) -> list[list[int]]:
-    global _cached_headlines, _cache_idx
+                           categories: list = None, sources: list = None,
+                           screen_id: str = "main") -> list[list[int]]:
+    headlines = _cached_headlines.get(screen_id) or []
+    idx = _cache_idx.get(screen_id, 0)
 
-    if not _cached_headlines or _cache_idx >= len(_cached_headlines):
-        _cached_headlines = await _fetch_headlines(api_key, categories, sources)
-        _cache_idx = 0
+    if not headlines or idx >= len(headlines):
+        headlines = await _fetch_headlines(api_key, categories, sources)
+        _cached_headlines[screen_id] = headlines
+        idx = 0
 
-    if not _cached_headlines:
+    if not headlines:
         return _error_matrix(rows, cols, "NO NEWS AVAILABLE")
 
-    headline = _cached_headlines[_cache_idx % len(_cached_headlines)]
-    _cache_idx += 1
+    headline = headlines[idx % len(headlines)]
+    _cache_idx[screen_id] = idx + 1
 
     return text_to_matrix(headline, rows, cols)
 

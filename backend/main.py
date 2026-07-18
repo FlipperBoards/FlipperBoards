@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import uuid
@@ -8,11 +9,16 @@ from typing import Optional
 
 import mimetypes
 
+import anyio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, Field
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logger = logging.getLogger("flipperboards")
 
 import database
 import mode_registry
@@ -27,6 +33,17 @@ from config import settings
 
 def get_org_id() -> int:
     return database.DEFAULT_ORG_ID
+
+async def _effective_settings() -> dict:
+    """DB settings with env-var fallbacks (FB_WEATHER_API_KEY / FB_NEWS_API_KEY)
+    applied when the DB value is empty — so docker-compose env config works."""
+    s = await database.get_settings()
+    if not s.get("weather_api_key") and settings.weather_api_key:
+        s["weather_api_key"] = settings.weather_api_key
+    if not s.get("news_api_key") and settings.news_api_key:
+        s["news_api_key"] = settings.news_api_key
+    return s
+
 
 # ── Upload directory ──────────────────────────────────────────────────────────
 
@@ -93,10 +110,12 @@ def _register_builtin_modes():
         cats = json.loads(s.get("news_categories", '["general"]'))
         srcs = json.loads(s.get("news_sources", "[]"))
         return await get_news_matrix(rows, cols,
-            api_key=s.get("news_api_key", ""), categories=cats, sources=srcs)
+            api_key=s.get("news_api_key", ""), categories=cats, sources=srcs,
+            screen_id=config.get("_screen_id", "main"))
 
     async def render_quotes(rows, cols, config, s):
-        return await get_quote_matrix(rows, cols, custom_quotes=config.get("custom_quotes", ""))
+        return await get_quote_matrix(rows, cols, custom_quotes=config.get("custom_quotes", ""),
+                                      screen_id=config.get("_screen_id", "main"))
 
     async def render_calendar(rows, cols, config, s):
         return await get_calendar_matrix(rows, cols,
@@ -141,10 +160,14 @@ async def _render_mode(mode: str, rows: int, cols: int, db_settings: dict, scree
             return text_to_matrix(config["message"], rows, cols)
         messages = await database.get_text_messages(screen_id)
         from services.text_svc import get_text_matrix
-        return await get_text_matrix(rows, cols, messages)
+        return await get_text_matrix(rows, cols, messages, screen_id=screen_id)
 
-    # all other modes (built-in and plugin) go through the registry
-    matrix = await mode_registry.render(mode, rows, cols, mode_config or {}, db_settings)
+    # all other modes (built-in and plugin) go through the registry.
+    # _screen_id rides along in config so per-screen renderers (news/quotes
+    # cursors) know which board they're feeding without changing the plugin API.
+    cfg = dict(mode_config or {})
+    cfg["_screen_id"] = screen_id
+    matrix = await mode_registry.render(mode, rows, cols, cfg, db_settings)
     if matrix is not None:
         return matrix
     return blank_matrix(rows, cols)
@@ -165,7 +188,7 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
     if item_type == "mode":
         mode = content.get("mode", "clock")
         state.mode = mode
-        db_settings = await database.get_settings()
+        db_settings = await _effective_settings()
         mode_entries = await database.get_modes(state.screen_id)
         mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
         mode_config = mode_entry.get("config", {}) if mode_entry else {}
@@ -186,7 +209,8 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
 
     elif item_type == "matrix":
         state.mode = "matrix_push"
-        state.matrix = content.get("matrix", blank_matrix(state.rows, state.cols))
+        stored = content.get("matrix") or blank_matrix(state.rows, state.cols)
+        state.matrix = _normalize_matrix(stored, state.rows, state.cols)
 
     elif item_type == "scoreboard":
         from services.scoreboard import get_scoreboard_matrix
@@ -206,6 +230,7 @@ async def advance_screen_mode(screen_id: str):
         return
 
     state = _screens[screen_id]
+    _cancel_push_timer(state)
 
     # Universal playlist takes priority when items exist
     if state.playlist_items:
@@ -217,7 +242,7 @@ async def advance_screen_mode(screen_id: str):
         return
 
     # Fallback: rotate through enabled modes
-    db_settings = await database.get_settings()
+    db_settings = await _effective_settings()
     modes = await database.get_modes(screen_id)
     enabled = [m for m in modes if m["enabled"]]
     if not enabled:
@@ -271,32 +296,44 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
         await _mqtt.publish_screen_state(state)
 
 
+MIN_ROTATION_SECONDS = 2
+
+
 async def _rotation_loop(screen_id: str):
-    """Per-screen loop — respects per-item durations when a playlist is active."""
-    try:
-        while True:
+    """Per-screen loop — respects per-item durations when a playlist is active.
+
+    Must never die: a transient failure (DB lock, renderer bug) pauses one
+    iteration, not the display, so a 24/7 board keeps rotating.
+    """
+    while True:
+        try:
             state = _screens[screen_id]
-            db_settings = await database.get_settings()
+            db_settings = await _effective_settings()
             default_interval = int(db_settings.get("rotation_interval", 30))
 
             if state.playlist_items:
                 item = state.playlist_items[state.playlist_pos]
-                duration = item.get("duration", default_interval)
+                duration = item.get("duration") or default_interval
             else:
                 duration = default_interval
 
-            await asyncio.sleep(duration)
+            await asyncio.sleep(max(MIN_ROTATION_SECONDS, duration))
             await advance_screen_mode(screen_id)
-    except asyncio.CancelledError:
-        pass
+        except asyncio.CancelledError:
+            raise
+        except KeyError:
+            return  # screen deleted
+        except Exception:
+            logger.exception("rotation loop error for screen '%s'", screen_id)
+            await asyncio.sleep(5)
 
 
 async def _clock_tick_loop():
     """Global 1-second tick — updates all screens currently in clock mode."""
-    try:
-        while True:
+    while True:
+        try:
             await asyncio.sleep(1)
-            db_settings = await database.get_settings()
+            db_settings = await _effective_settings()
             for sid, state in list(_screens.items()):
                 if state.mode == "clock":
                     from services.clock import get_clock_matrix
@@ -309,8 +346,11 @@ async def _clock_tick_loop():
                     state.color_matrix = None
                     state.photo_url = None
                     await _broadcast_screen(state)
-    except asyncio.CancelledError:
-        pass
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("clock tick loop error")
+            await asyncio.sleep(5)
 
 
 def _start_screen_rotation(screen_id: str):
@@ -350,7 +390,7 @@ async def lifespan(app: FastAPI):
     _register_builtin_modes()
     await plugin_registry.startup(app, loaded_plugins)
 
-    db_settings = await database.get_settings()
+    db_settings = await _effective_settings()
     screens = await database.get_screens()
 
     from services.clock import get_clock_matrix
@@ -415,18 +455,18 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 class DisplayContent(BaseModel):
     text: str
-    duration: Optional[int] = None   # seconds to show; None = until manually changed
+    duration: Optional[int] = Field(default=None, ge=1)  # None = until manually changed
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
-    duration: Optional[int] = None
+    duration: Optional[int] = Field(default=None, ge=1)
 
 class ColorMatrixContent(BaseModel):
     color_matrix: list[list[str]]
-    duration: Optional[int] = None
+    duration: Optional[int] = Field(default=None, ge=1)
 
 class SettingsUpdate(BaseModel):
-    rotation_interval: Optional[int] = None
+    rotation_interval: Optional[int] = Field(default=None, ge=MIN_ROTATION_SECONDS, le=86400)
     tile_color: Optional[str] = None
     bg_color: Optional[str] = None
     tile_bg_color: Optional[str] = None
@@ -455,7 +495,7 @@ class SettingsUpdate(BaseModel):
 
 class ModeContent(BaseModel):
     mode: str
-    duration: Optional[int] = None
+    duration: Optional[int] = Field(default=None, ge=1)
 
 class PlaylistJump(BaseModel):
     pos: int
@@ -468,13 +508,13 @@ class ImageUpdate(BaseModel):
 class ScreenCreate(BaseModel):
     id: str
     name: str
-    rows: int = 6
-    cols: int = 22
+    rows: int = Field(default_factory=lambda: settings.default_rows, ge=1, le=16)
+    cols: int = Field(default_factory=lambda: settings.default_cols, ge=1, le=48)
 
 class ScreenUpdate(BaseModel):
     name: str
-    rows: int
-    cols: int
+    rows: int = Field(ge=1, le=16)
+    cols: int = Field(ge=1, le=48)
 
 class ModeUpdate(BaseModel):
     mode: str
@@ -487,14 +527,14 @@ class TextMessage(BaseModel):
     duration: int = 30
 
 class PlaylistItemCreate(BaseModel):
-    type: str              # 'mode', 'text', 'photo', 'color'
+    type: str              # 'mode', 'text', 'photo', 'color', 'matrix', 'scoreboard'
     content: dict          # varies by type
-    duration: int = 30
+    duration: int = Field(default=30, ge=1, le=86400)
 
 class PlaylistItemUpdate(BaseModel):
     type: str
     content: dict
-    duration: int
+    duration: int = Field(ge=1, le=86400)
 
 class PlaylistReorder(BaseModel):
     ids: list[int]
@@ -517,6 +557,10 @@ def _valid_screen_id(sid: str) -> bool:
     return bool(re.match(r'^[a-z0-9_-]{1,64}$', sid))
 
 
+ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
 def _save_upload(file_bytes: bytes, original_filename: str) -> str:
     """Write bytes to UPLOAD_DIR and return the bare filename (no path prefix)."""
     ext = os.path.splitext(original_filename or "image.jpg")[1].lower() or ".jpg"
@@ -529,7 +573,12 @@ def _save_upload(file_bytes: bytes, original_filename: str) -> str:
 async def _register_upload(file_bytes: bytes, original_filename: str,
                             name: str = '', folder: str = '') -> dict:
     """Save to disk, record in image_library, return {id, url, name, folder}."""
-    filename = _save_upload(file_bytes, original_filename)
+    ext = os.path.splitext(original_filename or "image.jpg")[1].lower() or ".jpg"
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(415, f"Unsupported file type '{ext}' — use jpg/png/gif/webp")
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)")
+    filename = await anyio.to_thread.run_sync(_save_upload, file_bytes, original_filename)
     ct = mimetypes.guess_type(original_filename)[0] or 'image/jpeg'
     img_id = await database.add_image(
         filename=filename,
@@ -567,7 +616,7 @@ async def create_screen(body: ScreenCreate):
 
     await database.create_screen(body.id, body.name, body.rows, body.cols)
 
-    db_settings = await database.get_settings()
+    db_settings = await _effective_settings()
     from services.clock import get_clock_matrix
     state = ScreenState(body.id, body.name, body.rows, body.cols)
     state.matrix = get_clock_matrix(body.rows, body.cols,
@@ -595,7 +644,14 @@ async def update_screen(screen_id: str, body: ScreenUpdate):
     if state.rows != body.rows or state.cols != body.cols:
         state.rows = body.rows
         state.cols = body.cols
+        # Old-dimension content is invalid at the new size — clear and re-render
+        state.color_matrix = None
+        state.photo_url = None
         state.matrix = blank_matrix(body.rows, body.cols)
+        if state.playlist_items:
+            await _render_playlist_item(state)
+        else:
+            await _broadcast_screen(state)
 
     await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
     if _mqtt:
@@ -627,16 +683,54 @@ async def _screens_payload():
     ]
 
 
-def _schedule_revert(state: ScreenState, screen_id: str, duration: Optional[int]) -> None:
-    """Cancel any existing push timer. If duration > 0, advance mode after N seconds."""
+def _normalize_matrix(matrix, rows: int, cols: int) -> list[list[int]]:
+    """Fit a client-supplied matrix to the screen: pad/truncate to rows×cols,
+    clamp every cell to a valid tile code (0-77). Never trust the input shape —
+    a push must not be able to change the screen's configured dimensions."""
+    if not isinstance(matrix, list) or not matrix:
+        raise HTTPException(400, "Matrix must be a non-empty list of rows")
+    result = []
+    for r in range(rows):
+        src = matrix[r] if r < len(matrix) and isinstance(matrix[r], list) else []
+        row = []
+        for c in range(cols):
+            try:
+                v = int(src[c]) if c < len(src) else 0
+            except (TypeError, ValueError):
+                v = 0
+            row.append(v if 0 <= v <= 77 else 0)
+        result.append(row)
+    return result
+
+
+def _cancel_push_timer(state: ScreenState) -> None:
     if state.push_timer and not state.push_timer.done():
         state.push_timer.cancel()
     state.push_timer = None
+
+
+def _ensure_screen_rotation(screen_id: str) -> None:
+    state = _screens.get(screen_id)
+    if state and (state.rotation_task is None or state.rotation_task.done()):
+        _start_screen_rotation(screen_id)
+
+
+def _schedule_revert(state: ScreenState, screen_id: str, duration: Optional[int]) -> None:
+    """Coordinate pushed content with the rotation loop.
+
+    Rotation is paused while a push is showing so it can't preempt the pushed
+    content. With a duration, a revert timer advances and resumes rotation;
+    with None ("until changed"), rotation stays paused until the user acts.
+    """
+    _cancel_push_timer(state)
+    _stop_screen_rotation(screen_id)
     if duration is not None and duration > 0:
         async def _revert():
             try:
                 await asyncio.sleep(duration)
+                state.push_timer = None
                 await advance_screen_mode(screen_id)
+                _ensure_screen_rotation(screen_id)
             except asyncio.CancelledError:
                 pass
         state.push_timer = asyncio.create_task(_revert())
@@ -674,12 +768,8 @@ async def push_text(content: DisplayContent, screen: str = Query(default="main")
 
 @app.post("/api/display/matrix")
 async def push_matrix(content: MatrixContent, screen: str = Query(default="main")):
-    if not content.matrix:
-        raise HTTPException(400, "Empty matrix")
     state = get_screen_state(screen)
-    state.matrix = content.matrix
-    state.rows = len(content.matrix)
-    state.cols = len(content.matrix[0]) if content.matrix else 0
+    state.matrix = _normalize_matrix(content.matrix, state.rows, state.cols)
     state.color_matrix = None
     state.photo_url = None
     state.mode = "matrix_push"
@@ -693,10 +783,15 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
     if not content.color_matrix:
         raise HTTPException(400, "Empty color matrix")
     state = get_screen_state(screen)
-    state.color_matrix = content.color_matrix
+    # Pad/truncate to the screen's configured dimensions — never resize the screen
+    state.color_matrix = [
+        [(content.color_matrix[r][c]
+          if r < len(content.color_matrix) and c < len(content.color_matrix[r])
+          else "#1a1a1a")
+         for c in range(state.cols)]
+        for r in range(state.rows)
+    ]
     state.photo_url = None
-    state.rows = len(content.color_matrix)
-    state.cols = len(content.color_matrix[0]) if content.color_matrix else state.cols
     state.mode = "image_push"
     _schedule_revert(state, screen, content.duration)
     await _broadcast_screen(state)
@@ -747,6 +842,9 @@ async def blank_display(screen: str = Query(default="main")):
     state.color_matrix = None
     state.photo_url = None
     state.mode = "blank"
+    # Blank behaves like a push with no duration: rotation pauses so the
+    # board stays blank until the user advances or plays something.
+    _schedule_revert(state, screen, None)
     await _broadcast_screen(state)
     return {"status": "ok"}
 
@@ -756,6 +854,7 @@ async def next_mode(screen: str = Query(default="main")):
     if screen not in _screens:
         raise HTTPException(404)
     await advance_screen_mode(screen)
+    _ensure_screen_rotation(screen)
     return {"status": "ok", "mode": _screens[screen].mode}
 
 
@@ -766,7 +865,7 @@ async def push_mode(content: ModeContent, screen: str = Query(default="main")):
     mode = content.mode.strip().lower()
     if mode_registry.get(mode) is None:
         raise HTTPException(400, f"Unknown mode '{mode}'")
-    db_settings = await database.get_settings()
+    db_settings = await _effective_settings()
     mode_entries = await database.get_modes(screen)
     mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
     mode_config = mode_entry.get("config", {}) if mode_entry else {}
@@ -853,9 +952,20 @@ async def add_playlist_item(body: PlaylistItemCreate, screen: str = Query(defaul
     return {"status": "created", "id": item_id}
 
 
+def _screen_playlist_item(state: ScreenState, item_id: int) -> dict:
+    """404 unless the item belongs to this screen's playlist — item ids are
+    global autoincrement, so without this check one screen can mutate another's."""
+    item = next((i for i in state.playlist_items if i["id"] == item_id), None)
+    if item is None:
+        raise HTTPException(404, f"Playlist item {item_id} not found on screen '{state.screen_id}'")
+    return item
+
+
 @app.put("/api/playlist/{item_id}")
 async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: str = Query(default="main")):
     state = get_screen_state(screen)
+    state.playlist_items = await database.get_playlist_items(screen)
+    _screen_playlist_item(state, item_id)
     await database.update_playlist_item(item_id, body.type, body.content, body.duration)
     state.playlist_items = await database.get_playlist_items(screen)
     # Live-update: if the edited item is on screen now, re-render in place.
@@ -870,10 +980,16 @@ async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: s
 @app.delete("/api/playlist/{item_id}")
 async def remove_playlist_item(item_id: int, screen: str = Query(default="main")):
     state = get_screen_state(screen)
+    state.playlist_items = await database.get_playlist_items(screen)
+    _screen_playlist_item(state, item_id)
+    was_current = (state.playlist_items
+                   and state.playlist_items[state.playlist_pos % len(state.playlist_items)]["id"] == item_id)
     await database.remove_playlist_item(item_id)
     state.playlist_items = await database.get_playlist_items(screen)
     if state.playlist_items:
         state.playlist_pos = min(state.playlist_pos, len(state.playlist_items) - 1)
+        if was_current:
+            await _render_playlist_item(state)
     else:
         state.playlist_pos = 0
     return {"status": "deleted"}
@@ -904,6 +1020,7 @@ async def play_playlist(screen: str = Query(default="main")):
     if not state.playlist_items:
         raise HTTPException(400, "Playlist is empty")
     state.playlist_pos = 0
+    _cancel_push_timer(state)
     await _render_playlist_item(state, transition="sweep")
     # Restart rotation so timer starts fresh from now
     _stop_screen_rotation(screen)
@@ -921,6 +1038,7 @@ async def jump_playlist(body: PlaylistJump, screen: str = Query(default="main"))
     if not 0 <= body.pos < len(state.playlist_items):
         raise HTTPException(400, f"pos must be 0..{len(state.playlist_items) - 1}")
     state.playlist_pos = body.pos
+    _cancel_push_timer(state)
     await _render_playlist_item(state, transition="sweep")
     _stop_screen_rotation(screen)
     _start_screen_rotation(screen)
@@ -959,7 +1077,7 @@ async def push_design(design_id: int, screen: str = Query(default="main"),
     if not design:
         raise HTTPException(404, "Design not found")
     state = get_screen_state(screen)
-    state.matrix = design["matrix"]
+    state.matrix = _normalize_matrix(design["matrix"], state.rows, state.cols)
     state.color_matrix = None
     state.photo_url = None
     state.mode = "matrix_push"
@@ -1082,7 +1200,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
     await manager.connect(ws, screen)
 
     state = _screens.get(screen)
-    db_settings = await database.get_settings()
+    db_settings = await _effective_settings()
     screens_list = await _screens_payload()
 
     initial_msgs = [
@@ -1128,6 +1246,10 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.debug("websocket receive error on screen '%s'", screen, exc_info=True)
+    finally:
         manager.disconnect(ws, screen)
 
 
@@ -1144,7 +1266,7 @@ def _mqtt_json(payload: str) -> dict | None:
 
 async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload: str):
     if screen_id not in _screens:
-        print(f"MQTT: unknown screen '{screen_id}'")
+        logger.warning(f"MQTT: unknown screen '{screen_id}'")
         return
     state = _screens[screen_id]
     data = _mqtt_json(payload)
@@ -1174,7 +1296,7 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
             if design:
                 await push_design(design["id"], screen=screen_id, duration=duration)
             else:
-                print(f"MQTT: design '{ref}' not found")
+                logger.warning(f"MQTT: design '{ref}' not found")
 
         elif command == "image":
             ref = data.get("image") if data else payload
@@ -1187,7 +1309,7 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
             if img:
                 await push_library_photo(img["id"], screen=screen_id, duration=duration)
             else:
-                print(f"MQTT: image '{ref}' not found")
+                logger.warning(f"MQTT: image '{ref}' not found")
 
         elif command == "mode":
             await push_mode(ModeContent(mode=payload), screen=screen_id)
@@ -1205,7 +1327,7 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
                 try:
                     await jump_playlist(PlaylistJump(pos=int(action)), screen=screen_id)
                 except ValueError:
-                    print(f"MQTT: unknown playlist action '{payload}'")
+                    logger.warning(f"MQTT: unknown playlist action '{payload}'")
 
         elif command == "scoreboard":
             if not data:
@@ -1219,7 +1341,7 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
                 item = next((i for i in state.playlist_items
                              if i["type"] == "scoreboard"), None)
             if not item:
-                print(f"MQTT: scoreboard item '{item_ref}' not found on '{screen_id}'")
+                logger.warning(f"MQTT: scoreboard item '{item_ref}' not found on '{screen_id}'")
                 return
             content = dict(item.get("content", {}))
             for key in ("home_score", "away_score", "home_name", "away_name"):
@@ -1233,9 +1355,9 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
                 await _render_playlist_item(state)  # no transition — digits only
 
         else:
-            print(f"MQTT: unknown command '{command}'")
+            logger.warning(f"MQTT: unknown command '{command}'")
     except HTTPException as e:
-        print(f"MQTT: command '{command}' rejected: {e.detail}")
+        logger.warning(f"MQTT: command '{command}' rejected: {e.detail}")
 
 
 # ── Serve frontend ────────────────────────────────────────────────────────────
@@ -1246,6 +1368,10 @@ if os.path.exists(FRONTEND_DIST):
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
+        # API/asset paths that reach the catch-all are genuinely missing —
+        # return a real 404 instead of masking them with index.html
+        if full_path.startswith(("api/", "ws", "uploads/")):
+            raise HTTPException(404, "Not found")
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
 
