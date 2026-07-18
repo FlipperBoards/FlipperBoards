@@ -1,4 +1,6 @@
 import React, { useState } from 'react'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64)
@@ -13,37 +15,68 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
   const [editName, setEditName] = useState('')
   const [editRows, setEditRows] = useState(6)
   const [editCols, setEditCols] = useState(22)
+  const [editSchedule, setEditSchedule] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const showToast = useToast()
+
+  const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']  // Monday-first (backend weekday())
+
+  const defaultSchedule = { enabled: false, off_time: '22:00', on_time: '08:00', days: [0, 1, 2, 3, 4, 5, 6] }
 
   const createScreen = async () => {
     if (!newName.trim()) return
     const id = slugify(newName) || `screen-${Date.now()}`
-    await fetch('/api/screens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name: newName.trim(), rows: newRows, cols: newCols }),
-    })
-    setCreating(false)
-    setNewName('')
-    onRefresh()
-    onSelectScreen(id)
+    try {
+      await apiJson('/api/screens', 'POST',
+                    { id, name: newName.trim(), rows: newRows, cols: newCols })
+      setCreating(false)
+      setNewName('')
+      onRefresh()
+      onSelectScreen(id)  // only navigate once the screen actually exists
+    } catch (err) {
+      showToast(`Could not create screen: ${err.message}`)
+    }
   }
 
   const saveEdit = async (sid) => {
-    await fetch(`/api/screens/${sid}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: editName, rows: editRows, cols: editCols }),
-    })
-    setEditingId(null)
-    onRefresh()
+    try {
+      await apiJson(`/api/screens/${sid}`, 'PUT',
+                    { name: editName, rows: editRows, cols: editCols, schedule: editSchedule })
+      setEditingId(null)
+      onRefresh()
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`)
+    }
+  }
+
+  const setSched = (patch) => setEditSchedule(prev => ({ ...(prev || defaultSchedule), ...patch }))
+
+  const toggleDay = (d) => setEditSchedule(prev => {
+    const s = prev || defaultSchedule
+    const days = s.days.includes(d) ? s.days.filter(x => x !== d) : [...s.days, d].sort()
+    return { ...s, days }
+  })
+
+  const sleepNow = async (screen, sleeping, e) => {
+    e.stopPropagation()
+    try {
+      await apiJson(`/api/screens/${screen.id}/sleep`, 'POST', { sleeping })
+      onRefresh()
+    } catch (err) {
+      showToast(`${sleeping ? 'Sleep' : 'Wake'} failed: ${err.message}`)
+    }
   }
 
   const deleteScreen = async (sid) => {
-    await fetch(`/api/screens/${sid}`, { method: 'DELETE' })
-    setConfirmDelete(null)
-    if (activeScreenId === sid) onSelectScreen('main')
-    onRefresh()
+    try {
+      await apiFetch(`/api/screens/${sid}`, { method: 'DELETE' })
+      setConfirmDelete(null)
+      if (activeScreenId === sid) onSelectScreen('main')
+      onRefresh()
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`)
+      setConfirmDelete(null)
+    }
   }
 
   return (
@@ -125,6 +158,48 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
                     onChange={e => setEditCols(Number(e.target.value))}
                     className="fb-input" placeholder="Cols" />
                 </div>
+
+                {/* Quiet hours */}
+                <div className="rounded-lg p-2.5 space-y-2" style={{ border: '1px solid var(--border)' }}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox"
+                      checked={!!editSchedule?.enabled}
+                      onChange={e => setSched({ enabled: e.target.checked })}
+                      className="accent-blue-500" />
+                    <span className="text-[11px] font-mono" style={{ color: 'var(--text-2)' }}>
+                      Quiet hours — blank the display on a schedule
+                    </span>
+                  </label>
+                  {editSchedule?.enabled && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>Off at</span>
+                        <input type="time" value={editSchedule.off_time}
+                          onChange={e => setSched({ off_time: e.target.value })}
+                          className="fb-input py-1 text-[11px]" style={{ width: 92 }} />
+                        <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>on at</span>
+                        <input type="time" value={editSchedule.on_time}
+                          onChange={e => setSched({ on_time: e.target.value })}
+                          className="fb-input py-1 text-[11px]" style={{ width: 92 }} />
+                      </div>
+                      <div className="flex gap-1">
+                        {DAY_LABELS.map((label, d) => (
+                          <button key={d} type="button" onClick={() => toggleDay(d)}
+                            className="w-6 h-6 rounded text-[10px] font-mono transition-colors"
+                            style={editSchedule.days.includes(d)
+                              ? { background: 'var(--accent)', color: '#fff' }
+                              : { background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[9px] font-mono" style={{ color: 'var(--text-3)' }}>
+                        Days apply to the off time; overnight windows wake the next morning.
+                      </p>
+                    </>
+                  )}
+                </div>
+
                 <div className="flex gap-2">
                   <button onClick={() => saveEdit(screen.id)}
                     className="flex-1 text-xs font-mono font-semibold uppercase tracking-wider rounded-lg py-1.5 transition-colors"
@@ -163,6 +238,9 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
                     {activeScreenId === screen.id && (
                       <span className="text-[10px] font-mono" style={{ color: 'var(--accent)' }}>● active</span>
                     )}
+                    {screen.sleeping && (
+                      <span className="text-[10px] font-mono" style={{ color: '#a78bfa' }}>☾ sleeping</span>
+                    )}
                   </div>
                   <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-3)' }}>
                     {screen.id} · {screen.rows}×{screen.cols} · {screen.mode?.toUpperCase()}
@@ -186,6 +264,16 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
                   Open ↗
                 </a>
 
+                {/* Sleep / wake */}
+                <button
+                  onClick={e => sleepNow(screen, !screen.sleeping, e)}
+                  className="transition-colors text-sm px-1 flex-shrink-0"
+                  style={{ color: screen.sleeping ? '#a78bfa' : 'var(--text-3)' }}
+                  title={screen.sleeping ? 'Wake display' : 'Sleep display'}
+                >
+                  {screen.sleeping ? '☀' : '☾'}
+                </button>
+
                 {/* Edit */}
                 <button
                   onClick={e => {
@@ -194,6 +282,10 @@ export default function ScreenManager({ screens, activeScreenId, onSelectScreen,
                     setEditName(screen.name)
                     setEditRows(screen.rows)
                     setEditCols(screen.cols)
+                    setEditSchedule(
+                      screen.schedule && Object.keys(screen.schedule).length
+                        ? { ...defaultSchedule, ...screen.schedule }
+                        : { ...defaultSchedule })
                   }}
                   className="transition-colors text-sm px-1 flex-shrink-0"
                   style={{ color: 'var(--text-3)' }}

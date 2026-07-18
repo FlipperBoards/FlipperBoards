@@ -38,7 +38,7 @@ def load(plugin_names: list[str]) -> list[FlipperPlugin]:
     return plugins
 
 
-async def startup(app: "FastAPI", plugins: list[FlipperPlugin]) -> None:
+async def startup(app: FastAPI, plugins: list[FlipperPlugin]) -> None:
     """Register each plugin's modes then call on_startup."""
     import mode_registry
     for plugin in plugins:

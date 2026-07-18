@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import { apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 const TIMEZONES = [
   'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
@@ -44,23 +46,100 @@ function Field({ label, children }) {
   )
 }
 
+function SecuritySection() {
+  const [enabled, setEnabled] = useState(false)
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const showToast = useToast()
+
+  useEffect(() => {
+    fetch('/api/auth/status').then(r => r.json())
+      .then(st => setEnabled(st.enabled)).catch(() => {})
+  }, [])
+
+  const configure = async (nextEnabled) => {
+    if (busy) return
+    if (nextEnabled && !password.trim() && !enabled) {
+      showToast('Set a password first')
+      return
+    }
+    setBusy(true)
+    try {
+      const body = { enabled: nextEnabled }
+      if (password.trim()) body.password = password.trim()
+      await apiJson('/api/auth/configure', 'POST', body)
+      setEnabled(nextEnabled)
+      setPassword('')
+      showToast(
+        nextEnabled
+          ? (body.password ? 'Password set — control now requires login' : 'Login requirement enabled')
+          : 'Login requirement disabled',
+        'success')
+    } catch (err) {
+      showToast(`Security update failed: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Section title="Security">
+      <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>
+        {enabled
+          ? 'Login required — only people with the password can control the boards. Displays stay open.'
+          : 'Anyone on your network can control the boards. Set a password to restrict control to staff.'}
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          placeholder={enabled ? 'New password (optional)' : 'Choose a password (min 4 chars)'}
+          minLength={4}
+          className="fb-input flex-1"
+        />
+        {enabled && password.trim() && (
+          <button onClick={() => configure(true)} disabled={busy}
+            className="fb-btn-primary text-[11px] px-3 py-1.5 flex-shrink-0">
+            Change
+          </button>
+        )}
+      </div>
+      <button
+        onClick={() => configure(!enabled)}
+        disabled={busy || (!enabled && !password.trim())}
+        className={enabled ? 'fb-btn-ghost w-full py-2' : 'fb-btn-primary w-full py-2'}
+      >
+        {busy ? 'Working…' : enabled ? 'Disable Login Requirement' : 'Enable Login Requirement'}
+      </button>
+      {enabled && (
+        <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+          Changing the password signs everyone out. Sessions last 30 days.
+        </p>
+      )}
+    </Section>
+  )
+}
+
 export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
   const [s, setS] = useState(initialSettings || {})
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const showToast = useToast()
 
   useEffect(() => { setS(initialSettings || {}) }, [initialSettings])
 
   const set = (key, value) => setS(prev => ({ ...prev, [key]: value }))
 
   const save = async () => {
-    await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    if (saving) return
+    setSaving(true)
+    try {
+      await apiJson('/api/settings', 'PUT', {
         rotation_interval: Number(s.rotation_interval) || 30,
         tile_color:        s.tile_color        || '#ffffff',
-        bg_color:          s.bg_color          || '#111111',
-        tile_bg_color:     s.tile_bg_color     || '#222222',
+        bg_color:          s.bg_color          || '#1a1a1a',
+        tile_bg_color:     s.tile_bg_color     || '#2a2a2a',
         timezone:          s.timezone          || 'UTC',
         clock_format:      s.clock_format      || '12h',
         show_date:         s.show_date !== 'false',
@@ -74,11 +153,22 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         divider_width:     Number(s.divider_width) || 4,
         divider_color:     s.divider_color     || '#111111',
         physical_mode:     s.physical_mode === 'true',
-      }),
-    })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-    onUpdate()
+        mqtt_enabled:      s.mqtt_enabled === 'true',
+        mqtt_host:         s.mqtt_host        || '',
+        mqtt_port:         Number(s.mqtt_port) || 1883,
+        mqtt_username:     s.mqtt_username    || '',
+        mqtt_password:     s.mqtt_password    || '',
+        mqtt_base_topic:   s.mqtt_base_topic  || 'flipperboards',
+        mqtt_ha_discovery: s.mqtt_ha_discovery !== 'false',
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onUpdate()
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const applyPreset = (preset) =>
@@ -250,12 +340,66 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         </Field>
       </Section>
 
+      {/* MQTT */}
+      {/* Security */}
+      <SecuritySection />
+
+      <Section title="MQTT / Home Assistant">
+        <Field label="MQTT Control">
+          <select value={s.mqtt_enabled === 'true' ? 'true' : 'false'}
+            onChange={e => set('mqtt_enabled', e.target.value)} className="fb-input">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </Field>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <Field label="Broker Host">
+              <input type="text" placeholder="192.168.1.50" value={s.mqtt_host || ''}
+                onChange={e => set('mqtt_host', e.target.value)} className="fb-input" />
+            </Field>
+          </div>
+          <Field label="Port">
+            <input type="number" placeholder="1883" value={s.mqtt_port || '1883'}
+              onChange={e => set('mqtt_port', e.target.value)} className="fb-input" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Username">
+            <input type="text" placeholder="Optional" value={s.mqtt_username || ''}
+              onChange={e => set('mqtt_username', e.target.value)} className="fb-input" />
+          </Field>
+          <Field label="Password">
+            <input type="password" placeholder="Optional" value={s.mqtt_password || ''}
+              onChange={e => set('mqtt_password', e.target.value)} className="fb-input" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Base Topic">
+            <input type="text" placeholder="flipperboards" value={s.mqtt_base_topic || 'flipperboards'}
+              onChange={e => set('mqtt_base_topic', e.target.value)} className="fb-input" />
+          </Field>
+          <Field label="HA Discovery">
+            <select value={s.mqtt_ha_discovery === 'false' ? 'false' : 'true'}
+              onChange={e => set('mqtt_ha_discovery', e.target.value)} className="fb-input">
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </Field>
+        </div>
+        <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+          Saving restarts the MQTT connection. With HA Discovery on, each screen
+          appears in Home Assistant as a device with message, mode, and button entities.
+        </p>
+      </Section>
+
       <button
         onClick={save}
+        disabled={saving}
         className="fb-btn-primary w-full py-3"
         style={saved ? { background: '#16a34a' } : {}}
       >
-        {saved ? '✓ Saved' : 'Save Settings'}
+        {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Settings'}
       </button>
     </div>
   )

@@ -15,7 +15,7 @@ import httpx
 
 from plugins.base import FlipperPlugin
 from mode_registry import ModeDefinition
-from charmap import text_to_matrix, blank_matrix
+from charmap import text_to_matrix
 
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 

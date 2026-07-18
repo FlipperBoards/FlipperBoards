@@ -23,8 +23,14 @@ export default function SplitFlapDisplay({
   dividerColor = '#111111',
   physicalMode = false,
   fillViewport = false,    // when true: no padding/shadow/header, flush fill
+  sweepNonce = 0,          // increments when the server requests a full-board sweep
 }) {
   const prevMatrixRef = useRef([])
+  // Idempotence cache: React may re-invoke the memo for the same commit
+  // (StrictMode double render, concurrent bailouts). Keyed on the exact
+  // (matrix, sweepNonce) identity so re-invocation returns the cached map
+  // instead of re-diffing against already-updated refs.
+  const staggerCacheRef = useRef({ forMatrix: null, forSweep: -1, map: [] })
 
   const normalizedMatrix = useMemo(() => {
     const result = []
@@ -40,20 +46,26 @@ export default function SplitFlapDisplay({
   }, [matrix, rows, cols])
 
   const staggerMap = useMemo(() => {
+    const cache = staggerCacheRef.current
+    if (cache.forMatrix === normalizedMatrix && cache.forSweep === sweepNonce) {
+      return cache.map
+    }
+    const sweeping = cache.forSweep !== -1 && sweepNonce !== cache.forSweep
     const map = []
     for (let r = 0; r < rows; r++) {
       const row = []
       for (let c = 0; c < cols; c++) {
         const prevCode = prevMatrixRef.current?.[r]?.[c] ?? -1
         const newCode = normalizedMatrix[r]?.[c] ?? 0
-        row.push(prevCode !== newCode ? c * STAGGER_MS_PER_COL : 0)
+        row.push(sweeping || prevCode !== newCode ? c * STAGGER_MS_PER_COL : 0)
       }
       map.push(row)
     }
     prevMatrixRef.current = normalizedMatrix
+    staggerCacheRef.current = { forMatrix: normalizedMatrix, forSweep: sweepNonce, map }
     return map
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedMatrix])
+  }, [normalizedMatrix, sweepNonce])
 
   // Physical mode tile shadow — makes each tile look inset/3D
   const tileShadow = physicalMode
@@ -96,7 +108,7 @@ export default function SplitFlapDisplay({
                 ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                     tileFill delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
                 : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
-                    tileFill gridFontSize={gridFontSize}
+                    tileFill gridFontSize={gridFontSize} sweepNonce={sweepNonce}
                     delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
           )
         )}
@@ -148,7 +160,8 @@ export default function SplitFlapDisplay({
                   ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                       size={tileSize} delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
                   : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
-                      size={tileSize} delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
+                      size={tileSize} sweepNonce={sweepNonce}
+                      delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
             ))}
           </div>
         ))}

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { apiFetch, apiJson } from '../../utils/api'
+import { useToast } from '../Toast'
 
 export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [items, setItems] = useState([])
@@ -8,18 +10,32 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [addMode, setAddMode] = useState('clock')
   const [addText, setAddText] = useState('')
   const [addPhoto, setAddPhoto] = useState(null)
+  const [addHomeName, setAddHomeName] = useState('')
+  const [addAwayName, setAddAwayName] = useState('')
   const [addDuration, setAddDuration] = useState(30)
   const [saving, setSaving] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [editingDuration, setEditingDuration] = useState(null)
+  const [dragIdx, setDragIdx] = useState(null)
+  const [dragOverIdx, setDragOverIdx] = useState(null)
   const photoRef = useRef(null)
+  const rowRefs = useRef([])
+  const showToast = useToast()
 
   const modeById = Object.fromEntries(availableModes.map(m => [m.id, m]))
 
-  const itemIcon  = (item) => item.type === 'text' ? '📝' : item.type === 'photo' ? '🖼️' : modeById[item.content?.mode]?.icon ?? '⬡'
+  const itemIcon  = (item) =>
+    item.type === 'text' ? '📝'
+    : item.type === 'photo' ? '🖼️'
+    : item.type === 'scoreboard' ? '🆚'
+    : modeById[item.content?.mode]?.icon ?? '⬡'
   const itemLabel = (item) => {
     if (item.type === 'text') { const t = item.content?.text ?? ''; return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}"` }
     if (item.type === 'photo') return item.content?.url?.split('/').pop() ?? 'Photo'
+    if (item.type === 'scoreboard') {
+      const c = item.content ?? {}
+      return `${c.home_name ?? 'HOME'} ${c.home_score ?? 0} — ${c.away_score ?? 0} ${c.away_name ?? 'AWAY'}`
+    }
     return modeById[item.content?.mode]?.label ?? item.content?.mode ?? 'Mode'
   }
 
@@ -47,33 +63,67 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
         if (!addPhoto) return
         const fd = new FormData()
         fd.append('file', addPhoto)
-        const res = await fetch('/api/upload', { method: 'POST', body: fd })
-        const { url } = await res.json()
+        const { url } = await apiFetch('/api/upload', { method: 'POST', body: fd })
         content = { url }
       } else if (addType === 'text') {
         content = { text: addText }
+      } else if (addType === 'scoreboard') {
+        content = {
+          home_name: addHomeName.trim().toUpperCase(),
+          away_name: addAwayName.trim().toUpperCase(),
+          home_score: 0,
+          away_score: 0,
+        }
       } else {
         content = { mode: addMode }
       }
-      await fetch(`/api/playlist${qs}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: addType, content, duration: addDuration }),
-      })
+      await apiJson(`/api/playlist${qs}`, 'POST',
+                    { type: addType, content, duration: addDuration })
       await load()
       setShowAdd(false)
       setAddText('')
       setAddPhoto(null)
+      setAddHomeName('')
+      setAddAwayName('')
+    } catch (err) {
+      showToast(`Could not add item: ${err.message}`)
     } finally {
       setSaving(false)
     }
   }
 
-  const remove = async (id) => { await fetch(`/api/playlist/${id}${qs}`, { method: 'DELETE' }); await load() }
-  const clear  = async () => {
+  const bumpScore = async (item, side, delta) => {
+    const next = Math.max(0, (item.content?.[side] ?? 0) + delta)
+    try {
+      await apiJson(`/api/playlist/${item.id}${qs}`, 'PUT', {
+        type: 'scoreboard',
+        content: { ...item.content, [side]: next },
+        duration: item.duration,
+      })
+    } catch (err) {
+      showToast(`Score update failed: ${err.message}`)
+    }
+    await load()
+  }
+
+  const remove = async (id) => {
+    try {
+      await apiFetch(`/api/playlist/${id}${qs}`, { method: 'DELETE' })
+    } catch (err) {
+      showToast(`Remove failed: ${err.message}`)
+    }
+    await load()
+  }
+
+  const clear = async () => {
     if (!window.confirm(`Remove all ${items.length} item${items.length !== 1 ? 's' : ''}?`)) return
-    await fetch(`/api/playlist/clear${qs}`, { method: 'POST' })
-    setItems([])
+    try {
+      await apiFetch(`/api/playlist/clear${qs}`, { method: 'POST' })
+      setItems([])
+    } catch (err) {
+      showToast(`Clear failed: ${err.message}`)
+      await load()  // resync — the optimistic empty list would be a lie
+    }
   }
 
   const move = async (idx, dir) => {
@@ -81,29 +131,89 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     const swapIdx = idx + dir
     if (swapIdx < 0 || swapIdx >= newItems.length) return
     ;[newItems[idx], newItems[swapIdx]] = [newItems[swapIdx], newItems[idx]]
-    setItems(newItems)
-    await fetch(`/api/playlist/reorder${qs}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: newItems.map(i => i.id) }),
-    })
+    setItems(newItems)  // optimistic
+    try {
+      await apiJson(`/api/playlist/reorder${qs}`, 'POST',
+                    { ids: newItems.map(i => i.id) })
+    } catch (err) {
+      showToast(`Reorder failed: ${err.message}`)
+      await load()  // rollback to server order
+    }
+  }
+
+  // ── Drag to reorder (pointer-based — works with touch and mouse) ────────────
+
+  const commitOrder = async (newItems) => {
+    setItems(newItems)  // optimistic
+    try {
+      await apiJson(`/api/playlist/reorder${qs}`, 'POST',
+                    { ids: newItems.map(i => i.id) })
+    } catch (err) {
+      showToast(`Reorder failed: ${err.message}`)
+      await load()
+    }
+  }
+
+  const dragStateRef = useRef({ from: null, over: null })
+
+  const startDrag = (e, idx) => {
+    e.preventDefault()
+    dragStateRef.current = { from: idx, over: idx }
+    setDragIdx(idx)
+    setDragOverIdx(idx)
+
+    const onMove = (ev) => {
+      const y = ev.clientY ?? ev.touches?.[0]?.clientY
+      if (y == null) return
+      rowRefs.current.forEach((el, i) => {
+        if (!el) return
+        const rect = el.getBoundingClientRect()
+        if (y >= rect.top && y <= rect.bottom) {
+          dragStateRef.current.over = i
+          setDragOverIdx(i)
+        }
+      })
+    }
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      const { from, over } = dragStateRef.current
+      dragStateRef.current = { from: null, over: null }
+      setDragIdx(null)
+      setDragOverIdx(null)
+      if (from !== null && over !== null && from !== over) {
+        const next = [...items]
+        const [moved] = next.splice(from, 1)
+        next.splice(over, 0, moved)
+        commitOrder(next)
+      }
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   const saveDuration = async (item, newDuration) => {
     const dur = Math.max(5, parseInt(newDuration, 10) || 30)
-    await fetch(`/api/playlist/${item.id}${qs}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: item.type, content: item.content, duration: dur }),
-    })
+    try {
+      await apiJson(`/api/playlist/${item.id}${qs}`, 'PUT',
+                    { type: item.type, content: item.content, duration: dur })
+    } catch (err) {
+      showToast(`Duration update failed: ${err.message}`)
+    }
     setEditingDuration(null)
     await load()
   }
 
   const playNow = async () => {
-    await fetch(`/api/playlist/play${qs}`, { method: 'POST' })
-    setPlaying(true)
-    setTimeout(() => setPlaying(false), 2000)
+    try {
+      await apiFetch(`/api/playlist/play${qs}`, { method: 'POST' })
+      setPlaying(true)
+      setTimeout(() => setPlaying(false), 2000)
+    } catch (err) {
+      showToast(`Play failed: ${err.message}`)
+    }
   }
 
   return (
@@ -136,11 +246,23 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           {items.map((item, idx) => (
             <div
               key={item.id}
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5"
-              style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+              ref={el => { rowRefs.current[idx] = el }}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 transition-colors"
+              style={{
+                background: dragOverIdx === idx && dragIdx !== null && dragIdx !== idx
+                  ? 'var(--accent-dim)' : 'var(--surface)',
+                border: `1px solid ${dragOverIdx === idx && dragIdx !== null && dragIdx !== idx
+                  ? 'var(--accent-border)' : 'var(--border)'}`,
+                opacity: dragIdx === idx ? 0.5 : 1,
+              }}
             >
-              <span className="w-4 text-center text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-3)' }}>
-                {idx + 1}
+              <span
+                onPointerDown={e => startDrag(e, idx)}
+                className="w-5 text-center text-sm flex-shrink-0 cursor-grab active:cursor-grabbing select-none"
+                style={{ color: 'var(--text-3)', touchAction: 'none' }}
+                title="Drag to reorder"
+              >
+                ⠿
               </span>
               <span className="text-sm flex-shrink-0">{itemIcon(item)}</span>
               <div className="flex-1 min-w-0">
@@ -148,6 +270,27 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
                   <div className="flex items-center gap-2">
                     <img src={item.content?.url} alt="" className="h-5 w-8 object-cover rounded" style={{ border: '1px solid var(--border)' }} />
                     <span className="text-[11px] font-mono truncate" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
+                  </div>
+                ) : item.type === 'scoreboard' ? (
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-mono truncate block" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
+                    <div className="flex items-center gap-1">
+                      {[['home_score', item.content?.home_name ?? 'HOME'], ['away_score', item.content?.away_name ?? 'AWAY']].map(([side, label]) => (
+                        <div key={side} className="flex items-center gap-0.5 rounded px-1 py-0.5"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
+                          <span className="text-[9px] font-mono px-0.5 max-w-[52px] truncate" style={{ color: 'var(--text-3)' }}>{label}</span>
+                          <button onClick={() => bumpScore(item, side, -1)}
+                            className="w-4 h-4 flex items-center justify-center text-[11px] rounded transition-colors"
+                            style={{ color: 'var(--text-2)' }}>−</button>
+                          <span className="text-[11px] font-mono w-5 text-center" style={{ color: 'var(--text-1)' }}>
+                            {item.content?.[side] ?? 0}
+                          </span>
+                          <button onClick={() => bumpScore(item, side, 1)}
+                            className="w-4 h-4 flex items-center justify-center text-[11px] rounded transition-colors"
+                            style={{ color: 'var(--accent)' }}>+</button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <span className="text-[11px] font-mono truncate block" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
@@ -213,13 +356,13 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
           {/* Type tabs */}
           <div className="flex gap-1">
-            {['mode', 'text', 'photo'].map(t => (
+            {['mode', 'text', 'photo', 'scoreboard'].map(t => (
               <button key={t} onClick={() => setAddType(t)}
                 className="flex-1 py-1.5 rounded-lg text-xs font-mono font-semibold tracking-wider transition-colors uppercase"
                 style={addType === t
                   ? { background: 'var(--accent)', color: '#fff' }
                   : { background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
-                {t === 'mode' ? 'Mode' : t === 'text' ? 'Text' : 'Photo'}
+                {t === 'mode' ? 'Mode' : t === 'text' ? 'Text' : t === 'photo' ? 'Photo' : 'Score'}
               </button>
             ))}
           </div>
@@ -243,6 +386,25 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
             <textarea value={addText} onChange={e => setAddText(e.target.value)}
               placeholder="Enter message text…" rows={3}
               className="fb-input resize-none" />
+          )}
+
+          {addType === 'scoreboard' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: '#2a9d8f' }} />
+                <input type="text" value={addHomeName} onChange={e => setAddHomeName(e.target.value)}
+                  placeholder="Home team name…" maxLength={16} className="fb-input flex-1" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: '#e63946' }} />
+                <input type="text" value={addAwayName} onChange={e => setAddAwayName(e.target.value)}
+                  placeholder="Away team name…" maxLength={16} className="fb-input flex-1" />
+              </div>
+              <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+                Scores start at 0 — bump them live from the playlist row, the API, or MQTT.
+                Only the changed digits flip.
+              </p>
+            </div>
           )}
 
           {addType === 'photo' && (
@@ -276,7 +438,8 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
           <div className="flex gap-2 pt-1">
             <button onClick={addItem}
-              disabled={saving || (addType === 'text' && !addText.trim()) || (addType === 'photo' && !addPhoto)}
+              disabled={saving || (addType === 'text' && !addText.trim()) || (addType === 'photo' && !addPhoto)
+                || (addType === 'scoreboard' && (!addHomeName.trim() || !addAwayName.trim()))}
               className="fb-btn-primary flex-1">
               {saving ? 'Adding…' : 'Add to Playlist'}
             </button>

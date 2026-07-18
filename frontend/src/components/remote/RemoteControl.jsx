@@ -5,9 +5,10 @@ import TextInput from './TextInput'
 import ModeSelector from './ModeSelector'
 import SettingsPanel from './SettingsPanel'
 import ImageUpload from './ImageUpload'
-import ImagePlaylist from './ImagePlaylist'
+import UniversalPlaylist from './UniversalPlaylist'
 import ScreenManager from './ScreenManager'
 import ScreenDesigner from './ScreenDesigner'
+import LoginGate from '../LoginGate'
 import { useDisplayState } from '../../hooks/useDisplayState'
 
 const TABS = [
@@ -120,7 +121,7 @@ export default function RemoteControl() {
     setSearchParams(sid === 'main' ? {} : { screen: sid })
   }, [setSearchParams])
 
-  const bgColor        = appSettings.bg_color        || '#111111'
+  const bgColor        = appSettings.bg_color        || '#1a1a1a'
   const tileBgColor    = appSettings.tile_bg_color   || '#2a2a2a'
   const tileColor      = appSettings.tile_color      || '#ffffff'
   const dividerWidth   = parseInt(appSettings.divider_width || '4', 10)
@@ -131,6 +132,7 @@ export default function RemoteControl() {
 
   return (
     <div className="min-h-screen font-mono" style={{ background: 'var(--bg-base)' }}>
+      <LoginGate />
 
       {/* ── Header ── */}
       <header
@@ -253,6 +255,8 @@ export default function RemoteControl() {
             <TextInput
               key={`${activeScreenId}-${refreshKey}`}
               screenId={activeScreenId}
+              rows={rows}
+              cols={cols}
               onRefresh={refresh}
             />
           )}
@@ -272,7 +276,7 @@ export default function RemoteControl() {
             />
           )}
           {activeTab === 'playlist' && (
-            <ImagePlaylist
+            <UniversalPlaylist
               rows={rows}
               cols={cols}
               screenId={activeScreenId}

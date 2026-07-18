@@ -14,11 +14,8 @@ function getCtx() {
   return _ctx
 }
 
-let _muted = false
-let _volume = 0.15  // 0–1
-
-export function setAudioMuted(muted) { _muted = muted }
-export function setAudioVolume(vol) { _volume = Math.max(0, Math.min(1, vol)) }
+const _muted = false
+const _volume = 0.15  // 0–1
 
 /**
  * Plays a short mechanical clack — a noise burst shaped like a real flap hitting.

@@ -34,7 +34,7 @@ export default function DisplayView() {
   const screenId = searchParams.get('screen') || 'main'
   const kiosk = searchParams.get('kiosk') === '1'
 
-  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected } = useDisplayState(screenId)
+  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce } = useDisplayState(screenId)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [showControls, setShowControls] = useState(true)
@@ -62,7 +62,12 @@ export default function DisplayView() {
 
   const handleClick = useCallback(() => {
     if (!audioUnlocked) { unlockAudio(); setAudioUnlocked(true) }
-  }, [audioUnlocked])
+    // Kiosk hides all chrome including the fullscreen button — browsers only
+    // grant fullscreen on a user gesture, so the first tap doubles as that.
+    if (kiosk && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {})
+    }
+  }, [audioUnlocked, kiosk])
 
   const toggleFullscreen = useCallback(async () => {
     if (!document.fullscreenElement) {
@@ -74,7 +79,7 @@ export default function DisplayView() {
     }
   }, [])
 
-  const bgColor = appSettings.bg_color || '#111111'
+  const bgColor = appSettings.bg_color || '#1a1a1a'
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
   const soundParam = searchParams.get('sound')
@@ -89,6 +94,7 @@ export default function DisplayView() {
     quotes: 'QUOTE', calendar: 'CALENDAR', text: 'MESSAGE',
     text_push: 'MESSAGE', matrix_push: 'CUSTOM', blank: 'BLANK',
     image_push: 'IMAGE', photo_push: 'PHOTO', photo_playlist: 'PLAYLIST',
+    scoreboard: 'SCOREBOARD', sleep: 'SLEEPING', sports: 'SPORTS',
   }
 
   return (
@@ -141,6 +147,7 @@ export default function DisplayView() {
         dividerWidth={dividerWidth}
         dividerColor={dividerColor}
         physicalMode={physicalMode}
+        sweepNonce={sweepNonce}
         fillViewport
       />
 

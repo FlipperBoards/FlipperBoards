@@ -52,7 +52,7 @@ class FlipperPlugin(ABC):
     required: bool = False
 
     @property
-    def modes(self) -> list["ModeDefinition"]:
+    def modes(self) -> list[ModeDefinition]:
         """Display modes this plugin provides. Override to add modes."""
         return []
 
