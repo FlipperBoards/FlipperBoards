@@ -5,6 +5,9 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Added
+- Sports mode: live game scores from ESPN's public API (NFL, NBA, MLB, NHL,
+  college football/basketball, MLS, EPL) — rotates games or locks onto one
+  team with digit-only score flips; no API key required
 - Quiet hours: per-screen sleep schedules (off/on times, weekday selection,
   overnight windows) with manual ☾/☀ override via UI, REST, and MQTT
 - Display state persists across restarts — playlists resume at their

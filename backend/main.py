@@ -174,6 +174,13 @@ def _register_builtin_modes():
             ical_url=s.get("calendar_ical_url", ""),
             timezone=s.get("timezone", "UTC"))
 
+    async def render_sports(rows, cols, config, s):
+        from services.sports import get_sports_matrix
+        return await get_sports_matrix(rows, cols,
+            league=config.get("league", "nfl"),
+            team=config.get("team", ""),
+            screen_id=config.get("_screen_id", "main"))
+
     _text_schema = {
         "message": {
             "type": "textarea",
@@ -190,12 +197,28 @@ def _register_builtin_modes():
             "help": "Optional. Overrides built-in quotes when filled in.",
         }
     }
+    from services.sports import LEAGUES
+    _sports_schema = {
+        "league": {
+            "type": "select",
+            "label": "League",
+            "options": [{"value": key, "label": label} for key, (_, label) in LEAGUES.items()],
+            "default": "nfl",
+        },
+        "team": {
+            "type": "text",
+            "label": "Team Filter",
+            "placeholder": "e.g. KC — abbreviation or name",
+            "help": "Optional. Stay on one team's game (scores update live) instead of rotating through all games.",
+        },
+    }
     builtin = [
         ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
         ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
         ModeDefinition("news",     "News",          "📰", "Top headlines",           render=render_news),
         ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    config_schema=_quotes_schema, render=render_quotes),
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
+        ModeDefinition("sports",   "Sports",        "🏆", "Live game scores",        config_schema=_sports_schema, render=render_sports),
         ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
     ]
     for m in builtin:

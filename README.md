@@ -178,7 +178,13 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | News | Top headlines — falls back to BBC/Reuters RSS with no API key |
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
 | Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) |
+| Sports | Live game scores (NFL, NBA, MLB, NHL, college, MLS, EPL) — no API key needed |
 | Text Messages | Custom messages managed in the **Text** tab |
+
+**Sports mode** rotates through the day's games with live scores and game
+clocks. Set a **team filter** in the mode's ⚙ config to stay locked on one
+game — as the score changes, only the digits flip, just like a real stadium
+board. Scores refresh with the rotation interval (60s API cache).
 
 ---
 
