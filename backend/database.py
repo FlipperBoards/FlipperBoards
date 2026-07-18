@@ -23,7 +23,6 @@ async def _connect():
 async def init_db():
     async with _connect() as db:
         await _create_tables(db)
-        await _migrate(db)
         await _notify_plugins(db)
         await db.commit()
         await _seed_defaults(db)
@@ -156,83 +155,6 @@ async def _create_tables(db: aiosqlite.Connection):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_messages_screen ON text_messages(org_id, screen_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_designs_screen  ON designs(org_id, screen_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_images_folder   ON image_library(org_id, folder)")
-
-
-async def _migrate(db: aiosqlite.Connection):
-    """Add org_id to legacy tables that predate multi-tenant support."""
-
-    # display_settings: old schema had (key TEXT PRIMARY KEY, value TEXT).
-    # New schema needs (org_id, key) composite PK. Rebuild the table if needed.
-    async with db.execute("PRAGMA table_info(display_settings)") as cur:
-        cols = {row[1] for row in await cur.fetchall()}
-    if "org_id" not in cols and cols:
-        await db.execute("ALTER TABLE display_settings RENAME TO _display_settings_legacy")
-        await db.execute("""
-            CREATE TABLE display_settings (
-                org_id  INTEGER NOT NULL DEFAULT 1,
-                key     TEXT    NOT NULL,
-                value   TEXT    NOT NULL,
-                PRIMARY KEY (org_id, key)
-            )
-        """)
-        await db.execute(
-            "INSERT OR IGNORE INTO display_settings (org_id, key, value) "
-            "SELECT 1, key, value FROM _display_settings_legacy"
-        )
-        await db.execute("DROP TABLE _display_settings_legacy")
-
-    # screens: old schema had id TEXT PRIMARY KEY with no org_id
-    async with db.execute("PRAGMA table_info(screens)") as cur:
-        cols = {row[1] for row in await cur.fetchall()}
-    if "org_id" not in cols and cols:
-        # Rebuild — can't add a NOT NULL column without a default via ALTER in all SQLite versions
-        await db.execute("ALTER TABLE screens RENAME TO _screens_legacy")
-        await db.execute("""
-            CREATE TABLE screens (
-                id      TEXT    NOT NULL,
-                org_id  INTEGER NOT NULL DEFAULT 1,
-                name    TEXT    NOT NULL,
-                rows    INTEGER NOT NULL DEFAULT 6,
-                cols    INTEGER NOT NULL DEFAULT 22,
-                PRIMARY KEY (org_id, id)
-            )
-        """)
-        await db.execute(
-            "INSERT OR IGNORE INTO screens (id, org_id, name, rows, cols) "
-            "SELECT id, 1, name, rows, cols FROM _screens_legacy"
-        )
-        await db.execute("DROP TABLE _screens_legacy")
-
-    # screen_modes: old PK was (screen_id, mode)
-    async with db.execute("PRAGMA table_info(screen_modes)") as cur:
-        cols = {row[1] for row in await cur.fetchall()}
-    if "org_id" not in cols and cols:
-        await db.execute("ALTER TABLE screen_modes RENAME TO _screen_modes_legacy")
-        await db.execute("""
-            CREATE TABLE screen_modes (
-                org_id      INTEGER NOT NULL DEFAULT 1,
-                screen_id   TEXT    NOT NULL,
-                mode        TEXT    NOT NULL,
-                config      TEXT    NOT NULL DEFAULT '{}',
-                enabled     INTEGER NOT NULL DEFAULT 0,
-                sort_order  INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (org_id, screen_id, mode)
-            )
-        """)
-        await db.execute(
-            "INSERT OR IGNORE INTO screen_modes (org_id, screen_id, mode, config, enabled, sort_order) "
-            "SELECT 1, screen_id, mode, config, enabled, sort_order FROM _screen_modes_legacy"
-        )
-        await db.execute("DROP TABLE _screen_modes_legacy")
-
-    # text_messages and playlist_items: simple column additions are safe
-    for table in ("text_messages", "playlist_items"):
-        async with db.execute(f"PRAGMA table_info({table})") as cur:
-            cols = {row[1] for row in await cur.fetchall()}
-        if "org_id" not in cols and cols:
-            await db.execute(
-                f"ALTER TABLE {table} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1"
-            )
 
 
 async def _notify_plugins(db: aiosqlite.Connection):
@@ -642,8 +564,6 @@ async def delete_image(image_id: int, org_id: int = DEFAULT_ORG_ID) -> str | Non
         return row[0]
 
 
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"}
-
 async def remove_playlist_items_by_image_url(image_url: str, org_id: int = DEFAULT_ORG_ID):
     """Delete playlist items whose content JSON contains the given image URL."""
     async with _connect() as db:
@@ -707,31 +627,6 @@ async def delete_design(design_id: int, org_id: int = DEFAULT_ORG_ID):
     async with _connect() as db:
         await db.execute("DELETE FROM designs WHERE id=? AND org_id=?", (design_id, org_id))
         await db.commit()
-
-
-async def migrate_existing_uploads(upload_dir: str, org_id: int = DEFAULT_ORG_ID):
-    """One-time: register files already on disk that have no DB record yet."""
-    import os
-    import mimetypes
-    async with _connect() as db:
-        async with db.execute("SELECT filename FROM image_library WHERE org_id=?", (org_id,)) as cur:
-            known = {row[0] for row in await cur.fetchall()}
-        rows = []
-        for name in os.listdir(upload_dir):
-            if name in known or os.path.splitext(name)[1].lower() not in _IMAGE_EXTS:
-                continue
-            path = os.path.join(upload_dir, name)
-            if not os.path.isfile(path):
-                continue
-            rows.append((org_id, name, '', '', os.path.getsize(path),
-                         mimetypes.guess_type(name)[0] or 'image/jpeg'))
-        if rows:
-            await db.executemany(
-                "INSERT OR IGNORE INTO image_library "
-                "(org_id, filename, name, folder, size, content_type) VALUES (?,?,?,?,?,?)",
-                rows,
-            )
-            await db.commit()
 
 
 # ── Auth sessions ─────────────────────────────────────────────────────────────

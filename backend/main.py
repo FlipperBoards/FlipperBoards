@@ -432,7 +432,6 @@ async def lifespan(app: FastAPI):
     # Load plugins before DB init so they can register tables via on_db_init
     loaded_plugins = plugin_registry.load(settings.plugins)
     await database.init_db()
-    await database.migrate_existing_uploads(UPLOAD_DIR)
 
     _boot_settings = await database.get_settings()
     _auth_state["enabled"] = (_boot_settings.get("auth_enabled") == "true"
