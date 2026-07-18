@@ -5,6 +5,10 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Added
+- Quiet hours: per-screen sleep schedules (off/on times, weekday selection,
+  overnight windows) with manual ☾/☀ override via UI, REST, and MQTT
+- Display state persists across restarts — playlists resume at their
+  position, pushed content is restored instead of dropping to the clock
 - Optional password protection (Config → Security): control surfaces require
   login while displays stay open — built for shared networks like a bar where
   only staff should change the boards

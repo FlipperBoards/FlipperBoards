@@ -139,6 +139,20 @@ Once running (either option), open these URLs — replace `<ip>` with your Pi's 
 
 ---
 
+## Quiet Hours
+
+Each screen can sleep on a schedule — a bar's board blanks at closing time and
+wakes before opening. Configure per screen in **Screens → edit (✎)**:
+
+- **Off / on times** — overnight windows (off 23:00 → on 08:00) work naturally
+- **Days** — which weekdays the off time applies to
+- Manual override: the ☾/☀ button on each screen row, `POST
+  /api/screens/{id}/sleep {"sleeping": true}`, or MQTT `sleep/set` — holds
+  until the next scheduled boundary
+- Pushing content to a sleeping screen wakes it
+
+---
+
 ## Multiple Screens
 
 Each screen is an independent display with its own mode rotation, playlist, text queue, and WebSocket group. Create and manage screens in the **Screens** tab of the remote control, or via the API:
@@ -364,6 +378,7 @@ Base topic is configurable (default `flipperboards`); `<sid>` is the screen id
 | `flipperboards/<sid>/image/set` | library image id/name or `{"image":12,"duration":60}` |
 | `flipperboards/<sid>/mode/set` | mode id — `clock`, `weather`, `news`, … |
 | `flipperboards/<sid>/blank/set` | anything |
+| `flipperboards/<sid>/sleep/set` | `on` \| `off` — manual quiet-hours override |
 | `flipperboards/<sid>/playlist/set` | `next` \| `play` \| item index (`2`) |
 | `flipperboards/<sid>/scoreboard/set` | `{"home_score":3}` — partial updates OK |
 | `flipperboards/<sid>/scoreboard/<item_id>/set` | same, targeting a specific playlist item |

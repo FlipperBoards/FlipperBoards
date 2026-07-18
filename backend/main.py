@@ -17,7 +17,7 @@ from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Que
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -118,6 +118,10 @@ class ScreenState:
         self.mode_idx: int = 0
         self.rotation_task: asyncio.Task | None = None
         self.push_timer: asyncio.Task | None = None
+        # Quiet-hours schedule: {enabled, off_time "HH:MM", on_time "HH:MM", days [0-6]}
+        self.schedule: dict = {}
+        self.sleeping: bool = False
+        self.sched_prev: bool | None = None  # last computed in-window value (edge detection)
 
 
 _screens: dict[str, ScreenState] = {}
@@ -373,6 +377,103 @@ async def _persist_screen_state(state: ScreenState) -> None:
         logger.debug("screen state persist failed for '%s'", state.screen_id, exc_info=True)
 
 
+# ── Quiet hours ───────────────────────────────────────────────────────────────
+
+def _parse_hhmm(value: str) -> int | None:
+    try:
+        h, m = value.split(":")
+        h, m = int(h), int(m)
+        if 0 <= h < 24 and 0 <= m < 60:
+            return h * 60 + m
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
+def _in_quiet_window(now, schedule: dict) -> bool:
+    """True when `now` (an aware local datetime) falls inside the screen's
+    quiet window. `days` are the weekdays (0=Mon) the OFF time applies to;
+    overnight windows (off 22:00 → on 06:00) spill into the next morning."""
+    if not schedule.get("enabled"):
+        return False
+    off = _parse_hhmm(schedule.get("off_time", ""))
+    on = _parse_hhmm(schedule.get("on_time", ""))
+    days = schedule.get("days") or list(range(7))
+    if off is None or on is None or off == on:
+        return False
+    minutes = now.hour * 60 + now.minute
+    if off < on:  # same-day window
+        return now.weekday() in days and off <= minutes < on
+    # overnight: after off_time today, or before on_time following an off-day
+    if now.weekday() in days and minutes >= off:
+        return True
+    return (now.weekday() - 1) % 7 in days and minutes < on
+
+
+async def _sleep_screen(state: ScreenState) -> None:
+    _cancel_push_timer(state)
+    _stop_screen_rotation(state.screen_id)
+    state.sleeping = True
+    state.mode = "sleep"
+    state.matrix = blank_matrix(state.rows, state.cols)
+    state.color_matrix = None
+    state.photo_url = None
+    await _broadcast_screen(state)
+
+
+async def _wake_screen(state: ScreenState) -> None:
+    state.sleeping = False
+    if state.playlist_items:
+        await _render_playlist_item(state, transition="sweep")
+    else:
+        db_settings = await _effective_settings()
+        from services.clock import get_clock_matrix
+        state.mode = "clock"
+        state.matrix = get_clock_matrix(
+            state.rows, state.cols,
+            fmt=db_settings.get("clock_format", "12h"),
+            show_date=db_settings.get("show_date", "true") == "true",
+            timezone=db_settings.get("timezone", "UTC"),
+        )
+        await _broadcast_screen(state, transition="sweep")
+    _ensure_screen_rotation(state.screen_id)
+
+
+async def _schedule_tick_loop():
+    """Every 30s: sleep/wake screens whose quiet window boundary was crossed.
+    Edge-triggered after the first pass, so manual overrides stick until the
+    next scheduled boundary."""
+    import pytz
+    while True:
+        try:
+            await asyncio.sleep(30)
+            db_settings = await database.get_settings()
+            try:
+                tz = pytz.timezone(db_settings.get("timezone", "UTC"))
+            except Exception:
+                tz = pytz.utc
+            now = datetime.now(tz)
+            for state in list(_screens.values()):
+                if not state.schedule.get("enabled"):
+                    state.sched_prev = None
+                    continue
+                in_window = _in_quiet_window(now, state.schedule)
+                first_pass = state.sched_prev is None
+                crossed = state.sched_prev is not None and in_window != state.sched_prev
+                state.sched_prev = in_window
+                if (first_pass or crossed) and in_window and not state.sleeping:
+                    logger.info("quiet hours: sleeping screen '%s'", state.screen_id)
+                    await _sleep_screen(state)
+                elif (first_pass or crossed) and not in_window and state.sleeping:
+                    logger.info("quiet hours: waking screen '%s'", state.screen_id)
+                    await _wake_screen(state)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("schedule tick loop error")
+            await asyncio.sleep(5)
+
+
 MIN_ROTATION_SECONDS = 2
 
 
@@ -452,6 +553,7 @@ def _restart_all_rotations():
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 _clock_task: asyncio.Task | None = None
+_sched_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
@@ -480,6 +582,7 @@ async def lifespan(app: FastAPI):
     for screen in screens:
         sid = screen["id"]
         state = ScreenState(sid, screen["name"], screen["rows"], screen["cols"])
+        state.schedule = screen.get("schedule") or {}
 
         items = await database.get_playlist_items(sid)
         state.playlist_items = items
@@ -519,6 +622,8 @@ async def lifespan(app: FastAPI):
             await _render_playlist_item(state)
 
     _clock_task = asyncio.create_task(_clock_tick_loop())
+    global _sched_task
+    _sched_task = asyncio.create_task(_schedule_tick_loop())
 
     global _mqtt
     from mqtt_bridge import MQTTBridge
@@ -537,6 +642,9 @@ async def lifespan(app: FastAPI):
     # closes — otherwise aiosqlite worker threads stay alive and block exit.
     pending: list[asyncio.Task] = [_clock_task]
     _clock_task.cancel()
+    if _sched_task:
+        _sched_task.cancel()
+        pending.append(_sched_task)
     for state in _screens.values():
         for task in (state.rotation_task, state.push_timer):
             if task and not task.done():
@@ -701,10 +809,36 @@ class ScreenCreate(BaseModel):
     rows: int = Field(default_factory=lambda: settings.default_rows, ge=1, le=16)
     cols: int = Field(default_factory=lambda: settings.default_cols, ge=1, le=48)
 
+class ScheduleConfig(BaseModel):
+    enabled: bool = False
+    off_time: str = "22:00"    # display sleeps at this local time…
+    on_time: str = "08:00"     # …and wakes at this one (overnight OK)
+    days: list[int] = Field(default_factory=lambda: list(range(7)))  # 0=Mon
+
+    @field_validator("off_time", "on_time")
+    @classmethod
+    def _valid_time(cls, v):
+        if _parse_hhmm(v) is None:
+            raise ValueError("must be HH:MM (24h)")
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def _valid_days(cls, v):
+        if any(d < 0 or d > 6 for d in v):
+            raise ValueError("days must be 0-6 (Monday=0)")
+        return sorted(set(v))
+
+
 class ScreenUpdate(BaseModel):
     name: str
     rows: int = Field(ge=1, le=16)
     cols: int = Field(ge=1, le=48)
+    schedule: ScheduleConfig | None = None
+
+
+class SleepBody(BaseModel):
+    sleeping: bool
 
 class ModeUpdate(BaseModel):
     mode: str
@@ -793,6 +927,7 @@ async def list_screens():
             **s,
             "mode": state.mode if state else "unknown",
             "online": state is not None,
+            "sleeping": state.sleeping if state else False,
         })
     return result
 
@@ -828,9 +963,13 @@ async def update_screen(screen_id: str, body: ScreenUpdate):
     if screen_id not in _screens:
         raise HTTPException(404, f"Screen '{screen_id}' not found")
 
-    await database.update_screen(screen_id, body.name, body.rows, body.cols)
+    schedule = body.schedule.model_dump() if body.schedule is not None else None
+    await database.update_screen(screen_id, body.name, body.rows, body.cols, schedule=schedule)
     state = _screens[screen_id]
     state.name = body.name
+    if schedule is not None:
+        state.schedule = schedule
+        state.sched_prev = None  # re-evaluate on the next scheduler tick
     if state.rows != body.rows or state.cols != body.cols:
         state.rows = body.rows
         state.cols = body.cols
@@ -866,11 +1005,23 @@ async def delete_screen(screen_id: str):
     return {"status": "deleted"}
 
 
+@app.post("/api/screens/{screen_id}/sleep")
+async def set_screen_sleep(screen_id: str, body: SleepBody):
+    """Manual sleep/wake — holds until the next scheduled quiet-hours boundary."""
+    state = get_screen_state(screen_id)
+    if body.sleeping and not state.sleeping:
+        await _sleep_screen(state)
+    elif not body.sleeping and state.sleeping:
+        await _wake_screen(state)
+    return {"status": "ok", "sleeping": state.sleeping}
+
+
 async def _screens_payload():
     screens = await database.get_screens()
     return [
         {**s, "mode": _screens[s["id"]].mode if s["id"] in _screens else "unknown",
-         "online": s["id"] in _screens}
+         "online": s["id"] in _screens,
+         "sleeping": _screens[s["id"]].sleeping if s["id"] in _screens else False}
         for s in screens
     ]
 
@@ -926,6 +1077,7 @@ def _schedule_revert(state: ScreenState, screen_id: str, duration: int | None) -
     content. With a duration, a revert timer advances and resumes rotation;
     with None ("until changed"), rotation stays paused until the user acts.
     """
+    state.sleeping = False  # pushing content to a sleeping board wakes it
     _cancel_push_timer(state)
     _stop_screen_rotation(screen_id)
     if duration is not None and duration > 0:
@@ -1520,6 +1672,10 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
 
         elif command == "blank":
             await blank_display(screen=screen_id)
+
+        elif command == "sleep":
+            wants_sleep = payload.strip().lower() in ("on", "1", "true", "sleep")
+            await set_screen_sleep(screen_id, SleepBody(sleeping=wants_sleep))
 
         elif command == "playlist":
             action = payload.lower()

@@ -94,7 +94,7 @@ export default function DisplayView() {
     quotes: 'QUOTE', calendar: 'CALENDAR', text: 'MESSAGE',
     text_push: 'MESSAGE', matrix_push: 'CUSTOM', blank: 'BLANK',
     image_push: 'IMAGE', photo_push: 'PHOTO', photo_playlist: 'PLAYLIST',
-    scoreboard: 'SCOREBOARD',
+    scoreboard: 'SCOREBOARD', sleep: 'SLEEPING',
   }
 
   return (

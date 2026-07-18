@@ -78,11 +78,12 @@ async def _create_tables(db: aiosqlite.Connection):
 
     await db.execute("""
         CREATE TABLE IF NOT EXISTS screens (
-            id      TEXT    NOT NULL,
-            org_id  INTEGER NOT NULL DEFAULT 1,
-            name    TEXT    NOT NULL,
-            rows    INTEGER NOT NULL DEFAULT 6,
-            cols    INTEGER NOT NULL DEFAULT 22,
+            id       TEXT    NOT NULL,
+            org_id   INTEGER NOT NULL DEFAULT 1,
+            name     TEXT    NOT NULL,
+            rows     INTEGER NOT NULL DEFAULT 6,
+            cols     INTEGER NOT NULL DEFAULT 22,
+            schedule TEXT    NOT NULL DEFAULT '{}',
             PRIMARY KEY (org_id, id)
         )
     """)
@@ -275,26 +276,35 @@ async def get_organization(org_id: int) -> dict | None:
 
 # ── Screens ───────────────────────────────────────────────────────────────────
 
+def _screen_row_to_dict(row) -> dict:
+    d = dict(row)
+    try:
+        d["schedule"] = json.loads(d.get("schedule") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        d["schedule"] = {}
+    return d
+
+
 async def get_screens(org_id: int = DEFAULT_ORG_ID) -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, name, rows, cols FROM screens WHERE org_id = ? ORDER BY id",
+            "SELECT id, name, rows, cols, schedule FROM screens WHERE org_id = ? ORDER BY id",
             (org_id,)
         ) as cur:
             rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+    return [_screen_row_to_dict(row) for row in rows]
 
 
 async def get_screen(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> dict | None:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, name, rows, cols FROM screens WHERE id = ? AND org_id = ?",
+            "SELECT id, name, rows, cols, schedule FROM screens WHERE id = ? AND org_id = ?",
             (screen_id, org_id)
         ) as cur:
             row = await cur.fetchone()
-    return dict(row) if row else None
+    return _screen_row_to_dict(row) if row else None
 
 
 async def create_screen(
@@ -319,13 +329,20 @@ async def create_screen(
 
 
 async def update_screen(
-    screen_id: str, name: str, rows: int, cols: int, org_id: int = DEFAULT_ORG_ID
+    screen_id: str, name: str, rows: int, cols: int,
+    schedule: dict | None = None, org_id: int = DEFAULT_ORG_ID
 ):
     async with _connect() as db:
-        await db.execute(
-            "UPDATE screens SET name=?, rows=?, cols=? WHERE id=? AND org_id=?",
-            (name, rows, cols, screen_id, org_id)
-        )
+        if schedule is None:
+            await db.execute(
+                "UPDATE screens SET name=?, rows=?, cols=? WHERE id=? AND org_id=?",
+                (name, rows, cols, screen_id, org_id)
+            )
+        else:
+            await db.execute(
+                "UPDATE screens SET name=?, rows=?, cols=?, schedule=? WHERE id=? AND org_id=?",
+                (name, rows, cols, json.dumps(schedule), screen_id, org_id)
+            )
         await db.commit()
 
 
