@@ -343,6 +343,35 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
     if _mqtt:
         await _mqtt.publish_screen_state(state)
 
+    await _persist_screen_state(state)
+
+
+# Dedupe cache so the 1s clock tick doesn't write the DB every second
+_last_persisted: dict[str, str] = {}
+
+
+async def _persist_screen_state(state: ScreenState) -> None:
+    """Snapshot what's on screen so a restart restores it. Clock persists as a
+    bare mode marker — its matrix re-renders on boot anyway."""
+    if state.mode == "clock":
+        snapshot = {"mode": "clock"}
+    else:
+        snapshot = {
+            "mode": state.mode,
+            "matrix": state.matrix,
+            "color_matrix": state.color_matrix,
+            "photo_url": state.photo_url,
+            "playlist_pos": state.playlist_pos,
+        }
+    blob = json.dumps(snapshot)
+    if _last_persisted.get(state.screen_id) == blob:
+        return
+    _last_persisted[state.screen_id] = blob
+    try:
+        await database.save_screen_state(state.screen_id, snapshot)
+    except Exception:
+        logger.debug("screen state persist failed for '%s'", state.screen_id, exc_info=True)
+
 
 MIN_ROTATION_SECONDS = 2
 
@@ -410,7 +439,7 @@ def _start_screen_rotation(screen_id: str):
 def _stop_screen_rotation(screen_id: str):
     state = _screens.get(screen_id)
     if state and state.rotation_task:
-        state.rotation_task.cancel()
+        _cancel_task(state.rotation_task)
         state.rotation_task = None
 
 
@@ -446,17 +475,30 @@ async def lifespan(app: FastAPI):
 
     from services.clock import get_clock_matrix
 
+    _restored_push_screens: set[str] = set()
+
     for screen in screens:
         sid = screen["id"]
         state = ScreenState(sid, screen["name"], screen["rows"], screen["cols"])
 
-        # Load universal playlist; if populated, render item[0] instead of clock
         items = await database.get_playlist_items(sid)
         state.playlist_items = items
+        saved = await database.load_screen_state(sid)
+
         if items:
-            # Will be rendered properly after tasks start; set a safe initial state
-            state.playlist_pos = 0
+            # Resume the playlist where it left off (rendered after tasks start)
+            state.playlist_pos = min(saved.get("playlist_pos", 0), len(items) - 1) \
+                if saved else 0
             state.mode = "playlist"
+        elif saved and saved.get("mode") not in (None, "clock"):
+            # Restore pushed content; treat it as "until changed" — the user
+            # can advance manually, rather than losing the push to a reboot
+            state.mode = saved["mode"]
+            state.photo_url = saved.get("photo_url")
+            state.color_matrix = saved.get("color_matrix")
+            if saved.get("matrix"):
+                state.matrix = _normalize_matrix(saved["matrix"], state.rows, state.cols)
+            _restored_push_screens.add(sid)
         else:
             state.matrix = get_clock_matrix(
                 screen["rows"], screen["cols"],
@@ -468,7 +510,8 @@ async def lifespan(app: FastAPI):
         _screens[sid] = state
 
     for sid in _screens:
-        _start_screen_rotation(sid)
+        if sid not in _restored_push_screens:
+            _start_screen_rotation(sid)
 
     # Render initial playlist item for screens that have one
     for sid, state in _screens.items():
@@ -488,9 +531,25 @@ async def lifespan(app: FastAPI):
 
     await _mqtt.stop()
     _mqtt = None
+
+    # Cancel AND await every background task (including previously cancelled
+    # ones in _dying_tasks) so their async-with cleanup runs before the loop
+    # closes — otherwise aiosqlite worker threads stay alive and block exit.
+    pending: list[asyncio.Task] = [_clock_task]
     _clock_task.cancel()
-    for sid in list(_screens.keys()):
-        _stop_screen_rotation(sid)
+    for state in _screens.values():
+        for task in (state.rotation_task, state.push_timer):
+            if task and not task.done():
+                task.cancel()
+                pending.append(task)
+        state.rotation_task = None
+        state.push_timer = None
+    pending.extend(_dying_tasks)
+    await asyncio.gather(*pending, return_exceptions=True)
+    _dying_tasks.clear()
+    _screens.clear()
+    _last_persisted.clear()
+
     await plugin_registry.shutdown()
 
 
@@ -799,6 +858,8 @@ async def delete_screen(screen_id: str):
     _stop_screen_rotation(screen_id)
     del _screens[screen_id]
     await database.delete_screen(screen_id)
+    await database.delete_screen_state(screen_id)
+    _last_persisted.pop(screen_id, None)
     await manager.broadcast_all({"type": "screens_update", "screens": await _screens_payload()})
     if _mqtt:
         await _mqtt.remove_screen_discovery(screen_id)
@@ -834,9 +895,21 @@ def _normalize_matrix(matrix, rows: int, cols: int) -> list[list[int]]:
     return result
 
 
+# Every cancelled task must eventually be awaited: a task cancelled mid-DB-call
+# whose cancellation never gets processed before loop close strands a live
+# (non-daemon) aiosqlite worker thread and blocks interpreter exit.
+_dying_tasks: set[asyncio.Task] = set()
+
+
+def _cancel_task(task: asyncio.Task | None) -> None:
+    if task and not task.done():
+        task.cancel()
+        _dying_tasks.add(task)
+        task.add_done_callback(_dying_tasks.discard)
+
+
 def _cancel_push_timer(state: ScreenState) -> None:
-    if state.push_timer and not state.push_timer.done():
-        state.push_timer.cancel()
+    _cancel_task(state.push_timer)
     state.push_timer = None
 
 

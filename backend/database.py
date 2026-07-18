@@ -12,7 +12,13 @@ DEFAULT_ORG_ID = 1
 async def _connect():
     """Shared connection factory: WAL journal + busy timeout so concurrent
     reads/writes wait instead of raising 'database is locked'."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    conn = aiosqlite.connect(DB_PATH)
+    # aiosqlite.Connection IS a Thread. If the awaiting task is cancelled at
+    # exactly the wrong moment (a known aiosqlite race), the connection's
+    # cleanup never runs and the worker thread lives forever — as a daemon it
+    # can at least never block process exit.
+    conn.daemon = True
+    async with conn as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA busy_timeout=5000")
         yield db
@@ -146,6 +152,16 @@ async def _create_tables(db: aiosqlite.Connection):
             org_id      INTEGER NOT NULL DEFAULT 1,
             created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
             expires_at  TEXT    NOT NULL
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS screen_state (
+            org_id      INTEGER NOT NULL DEFAULT 1,
+            screen_id   TEXT    NOT NULL,
+            state       TEXT    NOT NULL,
+            updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (org_id, screen_id)
         )
     """)
 
@@ -662,4 +678,38 @@ async def clear_sessions(org_id: int = DEFAULT_ORG_ID):
     """Log everyone out — used when the password changes or auth is disabled."""
     async with _connect() as db:
         await db.execute("DELETE FROM auth_sessions WHERE org_id=?", (org_id,))
+        await db.commit()
+
+
+# ── Persisted display state ───────────────────────────────────────────────────
+
+async def save_screen_state(screen_id: str, state: dict, org_id: int = DEFAULT_ORG_ID):
+    async with _connect() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO screen_state (org_id, screen_id, state, updated_at) "
+            "VALUES (?, ?, ?, datetime('now'))",
+            (org_id, screen_id, json.dumps(state)),
+        )
+        await db.commit()
+
+
+async def load_screen_state(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> dict | None:
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT state FROM screen_state WHERE org_id=? AND screen_id=?",
+            (org_id, screen_id),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+async def delete_screen_state(screen_id: str, org_id: int = DEFAULT_ORG_ID):
+    async with _connect() as db:
+        await db.execute(
+            "DELETE FROM screen_state WHERE org_id=? AND screen_id=?", (org_id, screen_id))
         await db.commit()
