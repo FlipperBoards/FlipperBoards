@@ -15,6 +15,7 @@ A Vestaboard-style split-flap display application. Run it on a Raspberry Pi conn
 - **Physical frame mode** — configurable gap width and color between tiles to simulate wooden dowel rods
 - **Theming** — 5 built-in presets + custom color pickers for tile text, tile background, and board background
 - **REST API** — push any content programmatically
+- **Optional password protection** — lock down control so only staff can change the boards; displays stay open
 - **WebSocket sync** — all clients on a screen see changes instantly
 - **Kiosk mode** — `?kiosk=1` hides all controls for clean TV display
 - **Wake Lock** — prevents the TV screen from sleeping while the display view is open
@@ -318,6 +319,29 @@ DELETE /api/messages/{id}        # remove
 GET  /api/settings               # all settings
 PUT  /api/settings               # update any subset
 ```
+
+---
+
+## Security
+
+FlipperBoards is designed for **trusted private networks** (home, office, bar).
+By default there is no login. If untrusted people share the network — e.g. a
+venue with guest Wi-Fi — enable password protection in **Config → Security**:
+
+- **Control requires login** — the remote UI and every mutating API call
+  (`POST`/`PUT`/`DELETE`) need a session; staff sign in once per device
+  (sessions last 30 days)
+- **Displays stay open** — TVs, kiosks, and read-only API calls work without
+  a login, so wall-mounted screens survive reboots unattended
+- Passwords are stored as salted PBKDF2 hashes; changing the password signs
+  everyone out
+
+API clients authenticate with `POST /api/auth/login {"password": "..."}` and
+the returned `fb_session` cookie. MQTT is governed by your broker's own
+credentials, not this password.
+
+Do not expose FlipperBoards directly to the internet — for remote access use
+a VPN or an authenticating reverse proxy.
 
 ---
 

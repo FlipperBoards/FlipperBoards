@@ -13,6 +13,10 @@ export async function apiFetch(url, options = {}) {
       const body = await res.json()
       if (body?.detail) detail = typeof body.detail === 'string' ? body.detail : detail
     } catch { /* non-JSON error body */ }
+    if (res.status === 401) {
+      // Session missing/expired — LoginGate listens for this
+      window.dispatchEvent(new CustomEvent('fb-auth-required'))
+    }
     throw new Error(detail)
   }
   try {

@@ -46,6 +46,81 @@ function Field({ label, children }) {
   )
 }
 
+function SecuritySection() {
+  const [enabled, setEnabled] = useState(false)
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const showToast = useToast()
+
+  useEffect(() => {
+    fetch('/api/auth/status').then(r => r.json())
+      .then(st => setEnabled(st.enabled)).catch(() => {})
+  }, [])
+
+  const configure = async (nextEnabled) => {
+    if (busy) return
+    if (nextEnabled && !password.trim() && !enabled) {
+      showToast('Set a password first')
+      return
+    }
+    setBusy(true)
+    try {
+      const body = { enabled: nextEnabled }
+      if (password.trim()) body.password = password.trim()
+      await apiJson('/api/auth/configure', 'POST', body)
+      setEnabled(nextEnabled)
+      setPassword('')
+      showToast(
+        nextEnabled
+          ? (body.password ? 'Password set — control now requires login' : 'Login requirement enabled')
+          : 'Login requirement disabled',
+        'success')
+    } catch (err) {
+      showToast(`Security update failed: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Section title="Security">
+      <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>
+        {enabled
+          ? 'Login required — only people with the password can control the boards. Displays stay open.'
+          : 'Anyone on your network can control the boards. Set a password to restrict control to staff.'}
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          placeholder={enabled ? 'New password (optional)' : 'Choose a password (min 4 chars)'}
+          minLength={4}
+          className="fb-input flex-1"
+        />
+        {enabled && password.trim() && (
+          <button onClick={() => configure(true)} disabled={busy}
+            className="fb-btn-primary text-[11px] px-3 py-1.5 flex-shrink-0">
+            Change
+          </button>
+        )}
+      </div>
+      <button
+        onClick={() => configure(!enabled)}
+        disabled={busy || (!enabled && !password.trim())}
+        className={enabled ? 'fb-btn-ghost w-full py-2' : 'fb-btn-primary w-full py-2'}
+      >
+        {busy ? 'Working…' : enabled ? 'Disable Login Requirement' : 'Enable Login Requirement'}
+      </button>
+      {enabled && (
+        <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+          Changing the password signs everyone out. Sessions last 30 days.
+        </p>
+      )}
+    </Section>
+  )
+}
+
 export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
   const [s, setS] = useState(initialSettings || {})
   const [saved, setSaved] = useState(false)
@@ -266,6 +341,9 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       </Section>
 
       {/* MQTT */}
+      {/* Security */}
+      <SecuritySection />
+
       <Section title="MQTT / Home Assistant">
         <Field label="MQTT Control">
           <select value={s.mqtt_enabled === 'true' ? 'true' : 'false'}

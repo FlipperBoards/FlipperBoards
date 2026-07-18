@@ -1,18 +1,22 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
+import secrets
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 import mimetypes
 
 import anyio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Form
+from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query,
+                     UploadFile, File, Form, Request, Response)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO,
@@ -42,6 +46,51 @@ async def _effective_settings() -> dict:
     if not s.get("news_api_key") and settings.news_api_key:
         s["news_api_key"] = settings.news_api_key
     return s
+
+
+# ── Authentication ────────────────────────────────────────────────────────────
+# Single shared password for control surfaces (think: bar staff). The display
+# and all reads stay open — a wall-mounted TV can't log in. Off by default.
+
+AUTH_COOKIE = "fb_session"
+SESSION_DAYS = 30
+
+# Cached so the middleware doesn't hit the DB on every request; kept in sync
+# by lifespan startup and /api/auth/configure.
+_auth_state = {"enabled": False}
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
+    return f"{salt}${digest}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt, digest = stored.split("$", 1)
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
+        return secrets.compare_digest(candidate, digest)
+    except (ValueError, AttributeError):
+        return False
+
+
+async def _request_authenticated(request: Request) -> bool:
+    token = request.cookies.get(AUTH_COOKIE)
+    return bool(token) and await database.get_session(token)
+
+
+async def _issue_session(response: Response) -> None:
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.utcnow() + timedelta(days=SESSION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    await database.add_session(token, expires)
+    response.set_cookie(AUTH_COOKIE, token, max_age=SESSION_DAYS * 86400,
+                        httponly=True, samesite="lax")
+
+
+def _public_settings(s: dict) -> dict:
+    """Settings as sent to clients — never the password hash."""
+    return {k: v for k, v in s.items() if k != "auth_password_hash"}
 
 
 # ── Upload directory ──────────────────────────────────────────────────────────
@@ -385,6 +434,10 @@ async def lifespan(app: FastAPI):
     await database.init_db()
     await database.migrate_existing_uploads(UPLOAD_DIR)
 
+    _boot_settings = await database.get_settings()
+    _auth_state["enabled"] = (_boot_settings.get("auth_enabled") == "true"
+                              and bool(_boot_settings.get("auth_password_hash")))
+
     # Register built-in modes first, then plugin modes
     _register_builtin_modes()
     await plugin_registry.startup(app, loaded_plugins)
@@ -448,6 +501,86 @@ app = FastAPI(title="FlipperBoards", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+@app.middleware("http")
+async def _auth_middleware(request: Request, call_next):
+    """When auth is enabled, every mutating API call requires a session.
+    Reads and the WebSocket stay open so displays keep working unauthenticated."""
+    if (_auth_state["enabled"]
+            and request.method in ("POST", "PUT", "DELETE", "PATCH")
+            and request.url.path.startswith("/api/")
+            and not request.url.path.startswith("/api/auth/")):
+        if not await _request_authenticated(request):
+            return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    return await call_next(request)
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+class LoginBody(BaseModel):
+    password: str
+
+
+class AuthConfigure(BaseModel):
+    enabled: bool
+    password: str | None = Field(default=None, min_length=4, max_length=128)
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    enabled = _auth_state["enabled"]
+    return {
+        "enabled": enabled,
+        "authenticated": (not enabled) or await _request_authenticated(request),
+    }
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: LoginBody, response: Response):
+    if not _auth_state["enabled"]:
+        return {"status": "ok", "note": "authentication is disabled"}
+    db_settings = await database.get_settings()
+    if not _verify_password(body.password, db_settings.get("auth_password_hash", "")):
+        # Small constant delay blunts brute-force attempts from the LAN
+        await asyncio.sleep(0.5)
+        raise HTTPException(401, "Wrong password")
+    await _issue_session(response)
+    return {"status": "ok"}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    token = request.cookies.get(AUTH_COOKIE)
+    if token:
+        await database.remove_session(token)
+    response.delete_cookie(AUTH_COOKIE)
+    return {"status": "ok"}
+
+
+@app.post("/api/auth/configure")
+async def auth_configure(body: AuthConfigure, request: Request, response: Response):
+    """Enable/disable auth or change the password. Once auth is on, changing
+    it requires a logged-in session (the middleware exempts /api/auth/*)."""
+    if _auth_state["enabled"] and not await _request_authenticated(request):
+        raise HTTPException(401, "Authentication required")
+
+    if body.enabled:
+        db_settings = await database.get_settings()
+        if body.password:
+            await database.update_setting("auth_password_hash", _hash_password(body.password))
+            await database.clear_sessions()  # password change logs everyone out
+        elif not db_settings.get("auth_password_hash"):
+            raise HTTPException(400, "A password is required to enable authentication")
+        await database.update_setting("auth_enabled", "true")
+        _auth_state["enabled"] = True
+        await _issue_session(response)  # keep the enabling client logged in
+    else:
+        await database.update_setting("auth_enabled", "false")
+        await database.clear_sessions()
+        _auth_state["enabled"] = False
+
+    return {"status": "ok", "enabled": _auth_state["enabled"]}
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -1102,7 +1235,7 @@ async def queue_design(design_id: int, body: DesignQueueAdd, screen: str = Query
 
 @app.get("/api/settings")
 async def get_settings():
-    return await database.get_settings()
+    return _public_settings(await database.get_settings())
 
 
 @app.put("/api/settings")
@@ -1122,7 +1255,7 @@ async def update_settings(body: SettingsUpdate):
     if _mqtt and any(k.startswith("mqtt_") for k in updates):
         await _mqtt.restart()
 
-    new_settings = await database.get_settings()
+    new_settings = _public_settings(await database.get_settings())
     await manager.broadcast_all({"type": "settings_update", "settings": new_settings})
     return new_settings
 
@@ -1203,7 +1336,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
     screens_list = await _screens_payload()
 
     initial_msgs = [
-        {"type": "settings_update", "settings": db_settings},
+        {"type": "settings_update", "settings": _public_settings(db_settings)},
         {"type": "screens_update", "screens": screens_list},
         {"type": "modes_update", "modes": _merge_modes(await database.get_modes(screen))},
     ]

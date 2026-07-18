@@ -141,6 +141,15 @@ async def _create_tables(db: aiosqlite.Connection):
         )
     """)
 
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token       TEXT    PRIMARY KEY,
+            org_id      INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            expires_at  TEXT    NOT NULL
+        )
+    """)
+
     # Lookup indexes — these tables are queried by (org_id, screen_id)/folder
     # on every rotation tick and remote-control fetch
     await db.execute("CREATE INDEX IF NOT EXISTS idx_playlist_screen ON playlist_items(org_id, screen_id)")
@@ -265,6 +274,8 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "mqtt_password": "",
         "mqtt_base_topic": "flipperboards",
         "mqtt_ha_discovery": "true",
+        "auth_enabled": "false",
+        "auth_password_hash": "",
     }
     for key, value in global_defaults.items():
         await db.execute(
@@ -721,3 +732,39 @@ async def migrate_existing_uploads(upload_dir: str, org_id: int = DEFAULT_ORG_ID
                 rows,
             )
             await db.commit()
+
+
+# ── Auth sessions ─────────────────────────────────────────────────────────────
+
+async def add_session(token: str, expires_at: str, org_id: int = DEFAULT_ORG_ID):
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO auth_sessions (token, org_id, expires_at) VALUES (?, ?, ?)",
+            (token, org_id, expires_at),
+        )
+        # Opportunistic cleanup of expired sessions
+        await db.execute("DELETE FROM auth_sessions WHERE expires_at < datetime('now')")
+        await db.commit()
+
+
+async def get_session(token: str) -> bool:
+    """True when the token exists and has not expired."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT 1 FROM auth_sessions WHERE token=? AND expires_at >= datetime('now')",
+            (token,),
+        ) as cur:
+            return await cur.fetchone() is not None
+
+
+async def remove_session(token: str):
+    async with _connect() as db:
+        await db.execute("DELETE FROM auth_sessions WHERE token=?", (token,))
+        await db.commit()
+
+
+async def clear_sessions(org_id: int = DEFAULT_ORG_ID):
+    """Log everyone out — used when the password changes or auth is disabled."""
+    async with _connect() as db:
+        await db.execute("DELETE FROM auth_sessions WHERE org_id=?", (org_id,))
+        await db.commit()

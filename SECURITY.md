@@ -16,7 +16,12 @@ to credit you in the release notes (or keep you anonymous — your call).
 
 ## Deployment guidance
 
-FlipperBoards currently has **no built-in authentication** — it is designed to
-run on a trusted local network. Do not expose the API/UI ports directly to the
-internet; put it behind a VPN, or a reverse proxy with authentication, if you
-need remote access.
+FlipperBoards is designed for trusted private networks. Optional password
+protection (Config → Security) restricts control to people with the password
+while leaving displays open — enable it whenever untrusted people share the
+network (guest Wi-Fi, public venues).
+
+Even with the password enabled, do not expose the API/UI ports directly to
+the internet; put it behind a VPN, or a reverse proxy with authentication, if
+you need remote access. Reads (display state, screen list) are intentionally
+unauthenticated so wall-mounted displays work unattended.

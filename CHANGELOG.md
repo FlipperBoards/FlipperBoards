@@ -5,6 +5,9 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Added
+- Optional password protection (Config → Security): control surfaces require
+  login while displays stay open — built for shared networks like a bar where
+  only staff should change the boards
 - MQTT control for everything (text, matrix, designs, images, modes, playlist,
   scoreboards) with retained state topics and last-will availability
 - Home Assistant MQTT discovery — each screen appears as a device with

@@ -8,6 +8,7 @@ import ImageUpload from './ImageUpload'
 import UniversalPlaylist from './UniversalPlaylist'
 import ScreenManager from './ScreenManager'
 import ScreenDesigner from './ScreenDesigner'
+import LoginGate from '../LoginGate'
 import { useDisplayState } from '../../hooks/useDisplayState'
 
 const TABS = [
@@ -131,6 +132,7 @@ export default function RemoteControl() {
 
   return (
     <div className="min-h-screen font-mono" style={{ background: 'var(--bg-base)' }}>
+      <LoginGate />
 
       {/* ── Header ── */}
       <header
