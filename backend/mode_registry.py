@@ -10,7 +10,7 @@ when the plugin's on_startup() hook runs.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, Awaitable
+from collections.abc import Callable, Awaitable
 
 Matrix = list[list[int]]
 RenderFn = Callable[[int, int, dict, dict], Awaitable[Matrix]]

@@ -1,6 +1,5 @@
 import httpx
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from charmap import text_to_row, blank_matrix
 

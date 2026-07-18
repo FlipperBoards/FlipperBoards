@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
-from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -14,8 +13,8 @@ class Settings(BaseSettings):
     default_cols: int = 22
 
     # API keys (set via environment or .env file)
-    weather_api_key: Optional[str] = None
-    news_api_key: Optional[str] = None
+    weather_api_key: str | None = None
+    news_api_key: str | None = None
 
     # Comma-separated list of plugin names to load (e.g. FB_PLUGINS=billing,analytics)
     plugins: list[str] = []

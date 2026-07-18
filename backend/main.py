@@ -5,16 +5,15 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import mimetypes
 
 import anyio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Form, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -455,54 +454,54 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 class DisplayContent(BaseModel):
     text: str
-    duration: Optional[int] = Field(default=None, ge=1)  # None = until manually changed
+    duration: int | None = Field(default=None, ge=1)  # None = until manually changed
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
-    duration: Optional[int] = Field(default=None, ge=1)
+    duration: int | None = Field(default=None, ge=1)
 
 class ColorMatrixContent(BaseModel):
     color_matrix: list[list[str]]
-    duration: Optional[int] = Field(default=None, ge=1)
+    duration: int | None = Field(default=None, ge=1)
 
 class SettingsUpdate(BaseModel):
-    rotation_interval: Optional[int] = Field(default=None, ge=MIN_ROTATION_SECONDS, le=86400)
-    tile_color: Optional[str] = None
-    bg_color: Optional[str] = None
-    tile_bg_color: Optional[str] = None
-    timezone: Optional[str] = None
-    clock_format: Optional[str] = None
-    show_date: Optional[bool] = None
-    weather_location: Optional[str] = None
-    weather_units: Optional[str] = None
-    weather_api_key: Optional[str] = None
-    news_api_key: Optional[str] = None
-    news_categories: Optional[list[str]] = None
-    news_sources: Optional[list[str]] = None
-    calendar_ical_url: Optional[str] = None
-    sound_enabled: Optional[bool] = None
-    divider_width: Optional[int] = None
-    divider_color: Optional[str] = None
-    physical_mode: Optional[bool] = None
-    flip_duration: Optional[int] = None
-    mqtt_enabled: Optional[bool] = None
-    mqtt_host: Optional[str] = None
-    mqtt_port: Optional[int] = None
-    mqtt_username: Optional[str] = None
-    mqtt_password: Optional[str] = None
-    mqtt_base_topic: Optional[str] = None
-    mqtt_ha_discovery: Optional[bool] = None
+    rotation_interval: int | None = Field(default=None, ge=MIN_ROTATION_SECONDS, le=86400)
+    tile_color: str | None = None
+    bg_color: str | None = None
+    tile_bg_color: str | None = None
+    timezone: str | None = None
+    clock_format: str | None = None
+    show_date: bool | None = None
+    weather_location: str | None = None
+    weather_units: str | None = None
+    weather_api_key: str | None = None
+    news_api_key: str | None = None
+    news_categories: list[str] | None = None
+    news_sources: list[str] | None = None
+    calendar_ical_url: str | None = None
+    sound_enabled: bool | None = None
+    divider_width: int | None = None
+    divider_color: str | None = None
+    physical_mode: bool | None = None
+    flip_duration: int | None = None
+    mqtt_enabled: bool | None = None
+    mqtt_host: str | None = None
+    mqtt_port: int | None = None
+    mqtt_username: str | None = None
+    mqtt_password: str | None = None
+    mqtt_base_topic: str | None = None
+    mqtt_ha_discovery: bool | None = None
 
 class ModeContent(BaseModel):
     mode: str
-    duration: Optional[int] = Field(default=None, ge=1)
+    duration: int | None = Field(default=None, ge=1)
 
 class PlaylistJump(BaseModel):
     pos: int
 
 class ImageUpdate(BaseModel):
-    name: Optional[str] = None
-    folder: Optional[str] = None
+    name: str | None = None
+    folder: str | None = None
 
 
 class ScreenCreate(BaseModel):
@@ -520,7 +519,7 @@ class ModeUpdate(BaseModel):
     mode: str
     enabled: bool
     sort_order: int
-    config: Optional[dict] = {}
+    config: dict | None = {}
 
 class TextMessage(BaseModel):
     text: str
@@ -715,7 +714,7 @@ def _ensure_screen_rotation(screen_id: str) -> None:
         _start_screen_rotation(screen_id)
 
 
-def _schedule_revert(state: ScreenState, screen_id: str, duration: Optional[int]) -> None:
+def _schedule_revert(state: ScreenState, screen_id: str, duration: int | None) -> None:
     """Coordinate pushed content with the rotation loop.
 
     Rotation is paused while a push is showing so it can't preempt the pushed
@@ -803,7 +802,7 @@ async def push_photo(
     file: UploadFile = File(...),
     name: str = Form(default=''),
     folder: str = Form(default=''),
-    duration: Optional[int] = Form(default=None),
+    duration: int | None = Form(default=None),
     screen: str = Query(default="main"),
 ):
     state = get_screen_state(screen)
@@ -818,7 +817,7 @@ async def push_photo(
 
 
 @app.post("/api/display/photo/push/{image_id}")
-async def push_library_photo(image_id: int, screen: str = Query(default="main"), duration: Optional[int] = Query(default=None)):
+async def push_library_photo(image_id: int, screen: str = Query(default="main"), duration: int | None = Query(default=None)):
     """Push an already-uploaded library image to the display without re-uploading."""
     img = await database.get_image(image_id)
     if not img:
@@ -1072,7 +1071,7 @@ async def delete_design(design_id: int):
 
 @app.post("/api/designs/{design_id}/push")
 async def push_design(design_id: int, screen: str = Query(default="main"),
-                      duration: Optional[int] = Query(default=None)):
+                      duration: int | None = Query(default=None)):
     design = await database.get_design(design_id)
     if not design:
         raise HTTPException(404, "Design not found")

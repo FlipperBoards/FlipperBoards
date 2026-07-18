@@ -1,6 +1,5 @@
 import httpx
-import random
-from charmap import text_to_matrix, blank_matrix
+from charmap import text_to_matrix
 
 # Built-in fallback quotes
 BUILTIN_QUOTES = [

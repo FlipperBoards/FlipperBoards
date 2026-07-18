@@ -699,7 +699,8 @@ async def delete_design(design_id: int, org_id: int = DEFAULT_ORG_ID):
 
 async def migrate_existing_uploads(upload_dir: str, org_id: int = DEFAULT_ORG_ID):
     """One-time: register files already on disk that have no DB record yet."""
-    import os, mimetypes
+    import os
+    import mimetypes
     async with _connect() as db:
         async with db.execute("SELECT filename FROM image_library WHERE org_id=?", (org_id,)) as cur:
             known = {row[0] for row in await cur.fetchall()}
