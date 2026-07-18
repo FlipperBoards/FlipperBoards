@@ -77,8 +77,77 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
   const [stampFeedback, setStampFeedback]     = useState('')
   const [stampThreshold, setStampThreshold]   = useState(80)
 
+  // Paint mode: on touch devices the grid steals the scroll gesture, so
+  // painting is opt-in there. Fine pointers (mouse) default to paint.
+  const [paintMode, setPaintMode] = useState(
+    () => !window.matchMedia?.('(pointer: coarse)')?.matches
+  )
+
   const isPainting = useRef(false)
   const qs = `?screen=${encodeURIComponent(screenId)}`
+  const draftKey = `fb-designer-draft-${screenId}`
+
+  // ── Undo / redo (bounded history of matrix snapshots) ───────────────────────
+
+  const undoStack = useRef([])
+  const redoStack = useRef([])
+  const [historyVersion, setHistoryVersion] = useState(0)  // re-render for button states
+
+  const snapshot = useCallback((m) => {
+    undoStack.current.push(m.map(row => [...row]))
+    if (undoStack.current.length > 50) undoStack.current.shift()
+    redoStack.current = []
+    setHistoryVersion(v => v + 1)
+  }, [])
+
+  const undo = useCallback(() => {
+    if (!undoStack.current.length) return
+    setMatrix(prev => {
+      redoStack.current.push(prev.map(row => [...row]))
+      const restored = undoStack.current.pop()
+      setHistoryVersion(v => v + 1)
+      return restored
+    })
+  }, [])
+
+  const redo = useCallback(() => {
+    if (!redoStack.current.length) return
+    setMatrix(prev => {
+      undoStack.current.push(prev.map(row => [...row]))
+      const restored = redoStack.current.pop()
+      setHistoryVersion(v => v + 1)
+      return restored
+    })
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo() }
+      else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); redo() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [undo, redo])
+
+  // ── Draft autosave — switching tabs unmounts this component ─────────────────
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(draftKey)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length === rows && parsed[0]?.length === cols) {
+          setMatrix(parsed)
+        }
+      }
+    } catch { /* corrupt draft — ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey])
+
+  useEffect(() => {
+    try { localStorage.setItem(draftKey, JSON.stringify(matrix)) } catch { /* full */ }
+  }, [matrix, draftKey])
 
   // ── Load saved designs ──────────────────────────────────────────────────────
 
@@ -102,21 +171,38 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
   }, [activeCode])
 
   const handlePointerDown = useCallback((e, r, c) => {
+    if (!paintMode) {
+      // Tap-to-place mode: single tap paints one tile, no drag capture
+      snapshot(matrixRef.current)
+      paint(r, c)
+      return
+    }
     e.preventDefault()
     isPainting.current = true
+    snapshot(matrixRef.current)  // one undo step per stroke
     paint(r, c)
-  }, [paint])
+  }, [paint, paintMode, snapshot])
 
   const handlePointerEnter = useCallback((r, c) => {
-    if (isPainting.current) paint(r, c)
-  }, [paint])
+    if (paintMode && isPainting.current) paint(r, c)
+  }, [paint, paintMode])
 
   const stopPainting = useCallback(() => { isPainting.current = false }, [])
 
+  // Live matrix ref for stroke snapshots (avoids stale closure)
+  const matrixRef = useRef(matrix)
+  matrixRef.current = matrix
+
   // ── Tools ───────────────────────────────────────────────────────────────────
 
-  const fillAll   = () => setMatrix(Array.from({length: rows}, () => Array(cols).fill(activeCode)))
-  const clearAll  = () => setMatrix(blankMatrix())
+  const fillAll = () => {
+    snapshot(matrixRef.current)
+    setMatrix(Array.from({length: rows}, () => Array(cols).fill(activeCode)))
+  }
+  const clearAll = () => {
+    snapshot(matrixRef.current)
+    setMatrix(blankMatrix())
+  }
 
   // ── Icon stamp ──────────────────────────────────────────────────────────────
 
@@ -143,6 +229,7 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
       const ox = stampFitBoard ? 0 : Math.max(0, stampOriginX)
       const oy = stampFitBoard ? 0 : Math.max(0, stampOriginY)
       const stamp = await renderIconToTiles(iconDef, sw, sh, stampFgCode, stampBgCode, stampThreshold)
+      snapshot(matrixRef.current)
       setMatrix(prev => {
         const next = prev.map(row => [...row])
         for (let r = 0; r < sh; r++) {
@@ -202,7 +289,10 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
 
   // ── Saved design actions ────────────────────────────────────────────────────
 
-  const loadDesign  = (d) => setMatrix(d.matrix.map(r => [...r]))
+  const loadDesign  = (d) => {
+    snapshot(matrixRef.current)
+    setMatrix(d.matrix.map(r => [...r]))
+  }
 
   const pushDesign  = async (d) => {
     try {
@@ -240,14 +330,47 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
 
   return (
     <div className="space-y-5">
-      <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
-        Screen Designer
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-1)' }}>
+          Screen Designer
+        </h2>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={undo}
+            disabled={undoStack.current.length === 0}
+            className="fb-btn-ghost text-[11px] px-2.5 py-1 disabled:opacity-25"
+            title="Undo (Ctrl+Z)"
+          >
+            ↩ Undo
+          </button>
+          <button
+            onClick={redo}
+            disabled={redoStack.current.length === 0}
+            className="fb-btn-ghost text-[11px] px-2.5 py-1 disabled:opacity-25"
+            title="Redo (Ctrl+Y)"
+          >
+            ↪ Redo
+          </button>
+          <button
+            onClick={() => setPaintMode(p => !p)}
+            className="text-[11px] font-mono px-2.5 py-1 rounded-lg transition-colors"
+            style={paintMode
+              ? { background: 'var(--accent)', color: '#fff' }
+              : { background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}
+            title={paintMode
+              ? 'Drag paints tiles (page scroll disabled over the grid)'
+              : 'Tap places one tile; the page scrolls normally'}
+          >
+            {paintMode ? '🖌 Paint' : '👆 Tap'}
+          </button>
+        </div>
+      </div>
 
       {/* ── Grid ── */}
       <div
         className="rounded-xl overflow-hidden select-none"
-        style={{ border: '1px solid var(--border)', background: '#0d0d1a', touchAction: 'none' }}
+        style={{ border: '1px solid var(--border)', background: '#0d0d1a',
+                 touchAction: paintMode ? 'none' : 'auto' }}
         onPointerUp={stopPainting}
         onPointerLeave={stopPainting}
       >
@@ -265,7 +388,7 @@ export default function ScreenDesigner({ rows, cols, screenId = 'main' }) {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    touchAction: 'none',
+                    touchAction: paintMode ? 'none' : 'auto',
                   }}
                   onPointerDown={e => handlePointerDown(e, r, c)}
                   onPointerEnter={() => handlePointerEnter(r, c)}

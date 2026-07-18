@@ -16,7 +16,10 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [saving, setSaving] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [editingDuration, setEditingDuration] = useState(null)
+  const [dragIdx, setDragIdx] = useState(null)
+  const [dragOverIdx, setDragOverIdx] = useState(null)
   const photoRef = useRef(null)
+  const rowRefs = useRef([])
   const showToast = useToast()
 
   const modeById = Object.fromEntries(availableModes.map(m => [m.id, m]))
@@ -138,6 +141,59 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     }
   }
 
+  // ── Drag to reorder (pointer-based — works with touch and mouse) ────────────
+
+  const commitOrder = async (newItems) => {
+    setItems(newItems)  // optimistic
+    try {
+      await apiJson(`/api/playlist/reorder${qs}`, 'POST',
+                    { ids: newItems.map(i => i.id) })
+    } catch (err) {
+      showToast(`Reorder failed: ${err.message}`)
+      await load()
+    }
+  }
+
+  const dragStateRef = useRef({ from: null, over: null })
+
+  const startDrag = (e, idx) => {
+    e.preventDefault()
+    dragStateRef.current = { from: idx, over: idx }
+    setDragIdx(idx)
+    setDragOverIdx(idx)
+
+    const onMove = (ev) => {
+      const y = ev.clientY ?? ev.touches?.[0]?.clientY
+      if (y == null) return
+      rowRefs.current.forEach((el, i) => {
+        if (!el) return
+        const rect = el.getBoundingClientRect()
+        if (y >= rect.top && y <= rect.bottom) {
+          dragStateRef.current.over = i
+          setDragOverIdx(i)
+        }
+      })
+    }
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      const { from, over } = dragStateRef.current
+      dragStateRef.current = { from: null, over: null }
+      setDragIdx(null)
+      setDragOverIdx(null)
+      if (from !== null && over !== null && from !== over) {
+        const next = [...items]
+        const [moved] = next.splice(from, 1)
+        next.splice(over, 0, moved)
+        commitOrder(next)
+      }
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   const saveDuration = async (item, newDuration) => {
     const dur = Math.max(5, parseInt(newDuration, 10) || 30)
     try {
@@ -190,11 +246,23 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           {items.map((item, idx) => (
             <div
               key={item.id}
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5"
-              style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+              ref={el => { rowRefs.current[idx] = el }}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 transition-colors"
+              style={{
+                background: dragOverIdx === idx && dragIdx !== null && dragIdx !== idx
+                  ? 'var(--accent-dim)' : 'var(--surface)',
+                border: `1px solid ${dragOverIdx === idx && dragIdx !== null && dragIdx !== idx
+                  ? 'var(--accent-border)' : 'var(--border)'}`,
+                opacity: dragIdx === idx ? 0.5 : 1,
+              }}
             >
-              <span className="w-4 text-center text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-3)' }}>
-                {idx + 1}
+              <span
+                onPointerDown={e => startDrag(e, idx)}
+                className="w-5 text-center text-sm flex-shrink-0 cursor-grab active:cursor-grabbing select-none"
+                style={{ color: 'var(--text-3)', touchAction: 'none' }}
+                title="Drag to reorder"
+              >
+                ⠿
               </span>
               <span className="text-sm flex-shrink-0">{itemIcon(item)}</span>
               <div className="flex-1 min-w-0">

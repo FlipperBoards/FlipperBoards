@@ -1,9 +1,39 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import DurationPicker from './DurationPicker'
 import { apiFetch, apiJson } from '../../utils/api'
 import { useToast } from '../Toast'
+import { textToMatrix, codeToChar } from '../../utils/charmap'
 
-export default function TextInput({ screenId = 'main', onRefresh }) {
+function TextPreview({ text, rows = 6, cols = 22 }) {
+  const matrix = useMemo(() => textToMatrix(text, rows, cols), [text, rows, cols])
+  return (
+    <div
+      className="rounded-lg overflow-hidden mx-3 mb-3"
+      style={{ border: '1px solid var(--border)', background: '#0d0d1a' }}
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 1 }}>
+        {matrix.flatMap((row, r) => row.map((code, c) => (
+          <div
+            key={`${r}-${c}`}
+            className="flex items-center justify-center"
+            style={{ aspectRatio: '9/14', background: '#1a1a2e' }}
+          >
+            {code !== 0 && (
+              <span style={{
+                fontSize: '50%', lineHeight: 1, color: '#c8d0e0',
+                fontFamily: '"Bebas Neue", "Share Tech Mono", monospace',
+              }}>
+                {codeToChar(code)}
+              </span>
+            )}
+          </div>
+        )))}
+      </div>
+    </div>
+  )
+}
+
+export default function TextInput({ screenId = 'main', onRefresh, rows = 6, cols = 22 }) {
   const [text, setText] = useState('')
   const [messages, setMessages] = useState([])
   const [status, setStatus] = useState('')
@@ -85,6 +115,9 @@ export default function TextInput({ screenId = 'main', onRefresh }) {
           value={text}
           onChange={e => setText(e.target.value)}
         />
+
+        {/* Live board preview — exactly how the text will wrap and center */}
+        {text.trim() && <TextPreview text={text} rows={rows} cols={cols} />}
 
         {/* Send Now row */}
         <div

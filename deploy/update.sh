@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# update.sh — polls GitHub and restarts services when new commits land.
-# Invoked by the flipperboards-updater systemd service every 60 seconds.
+# update.sh — polls GitHub and restarts the service when new commits land.
+# Invoked by the flipperboards-updater systemd timer.
 
 set -euo pipefail
 
@@ -11,6 +11,10 @@ LOG_TAG="flipperboards-updater"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | systemd-cat -t "$LOG_TAG" -p info; }
 
 cd "$REPO_DIR"
+
+# Running as root against a user-owned clone — required or git refuses with
+# "detected dubious ownership in repository"
+git config --global --add safe.directory "$REPO_DIR" 2>/dev/null || true
 
 git fetch origin "$BRANCH" --quiet
 
@@ -24,20 +28,30 @@ fi
 log "New commit detected ($LOCAL → $REMOTE), updating…"
 git pull origin "$BRANCH" --ff-only --quiet
 
-# Reinstall Python deps only if requirements.txt changed
-if git diff --name-only "$LOCAL" "$REMOTE" | grep -q "backend/requirements"; then
+# Use the repo venv when present, mirroring install.sh
+if [ -x "$REPO_DIR/backend/.venv/bin/pip" ]; then
+  PIP="$REPO_DIR/backend/.venv/bin/pip"
+else
+  PIP="pip"
+fi
+
+CHANGED=$(git diff --name-only "$LOCAL" "$REMOTE")
+
+if echo "$CHANGED" | grep -q "backend/requirements"; then
   log "requirements.txt changed, reinstalling…"
-  pip install -q -r "$REPO_DIR/backend/requirements.txt"
+  $PIP install -q -r "$REPO_DIR/backend/requirements.txt"
 fi
 
-# npm install only if package.json changed
-if git diff --name-only "$LOCAL" "$REMOTE" | grep -q "frontend/package"; then
-  log "package.json changed, running npm install…"
-  npm --prefix "$REPO_DIR/frontend" install --silent
+if echo "$CHANGED" | grep -q "^frontend/"; then
+  if echo "$CHANGED" | grep -q "frontend/package"; then
+    log "package.json changed, running npm install…"
+    npm --prefix "$REPO_DIR/frontend" install --silent
+  fi
+  log "Rebuilding frontend…"
+  npm --prefix "$REPO_DIR/frontend" run build --silent
 fi
 
-log "Restarting services…"
+log "Restarting service…"
 systemctl restart flipperboards-backend
-systemctl restart flipperboards-frontend
 
 log "Update complete — now at $(git rev-parse --short HEAD)."

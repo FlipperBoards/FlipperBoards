@@ -6,8 +6,8 @@ A Vestaboard-style split-flap display application. Run it on a Raspberry Pi conn
 
 ## Features
 
-- **Authentic split-flap animation** — CSS 3D fold/rise keyframes, Web Audio synthesized flip sounds, per-column stagger timing
-- **Vestaboard character set** — codes 0–77 (blank, A–Z, 0–9, punctuation, 7 color tiles)
+- **Authentic split-flap animation** — CSS 3D fold/rise keyframes, Web Audio synthesized flip sounds, per-column stagger timing, full-board sweep transitions
+- **Vestaboard character set** — codes 0–77: A–Z, digits, punctuation, hearts/stars/arrows/shapes (`♥ ★ → ■ ○ °`…), and 7 color tiles
 - **Multiple independent screens** — each screen has its own URL, mode rotation, playlist, and WebSocket group; cast any screen to any TV
 - **Six auto-rotation modes** — Clock, Weather, News, Quotes, Calendar, Text Messages
 - **Content playlist** — arrange any content in any order with per-item durations; mixes modes, custom text, and photos
@@ -50,22 +50,22 @@ source .venv/bin/activate
 python main.py
 ```
 
-#### Auto-start with systemd
-
-Edit `flipperboards.service` if your username or install path differs from the defaults (`pi` / `/home/pi/FlipperBoards`), then:
+#### Auto-start with systemd (+ optional auto-update)
 
 ```bash
-sudo cp flipperboards.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable flipperboards
-sudo systemctl start flipperboards
+sudo bash deploy/install.sh
 ```
+
+This installs `flipperboards-backend` (serves the API **and** the built
+frontend on port 8000) plus an auto-update timer that pulls new commits,
+rebuilds when needed, and restarts. Disable auto-update if you prefer manual
+control: `sudo systemctl disable --now flipperboards-updater.timer`.
 
 Useful commands:
 ```bash
-sudo systemctl status flipperboards   # check status
-sudo journalctl -u flipperboards -f   # live logs
-sudo systemctl restart flipperboards  # restart after config change
+sudo systemctl status flipperboards-backend   # check status
+sudo journalctl -u flipperboards-backend -f   # live logs
+sudo journalctl -t flipperboards-updater -f   # updater logs
 ```
 
 ---
@@ -428,14 +428,14 @@ All keys are optional — the app works without any of them.
 | 0 | Blank |
 | 1–26 | A–Z |
 | 27–36 | 1–0 |
-| 37–62 | Punctuation (`!`, `@`, `#`, `$`, `(`, `)`, `-`, `+`, `&`, `=`, `;`, `:`, `"`, `'`, `%`, `,`, `.`, `/`, `\`, `?`) |
-| 71 | Red tile |
-| 72 | Orange tile |
-| 73 | Yellow tile |
-| 74 | Green tile |
-| 75 | Blue tile |
-| 76 | Violet tile |
-| 77 | White tile |
+| 37–46 | `!` `@` `#` `$` `(` `)` `-` `+` `&` `=` |
+| 47–56 | `;` `:` `'` `"` `%` `,` `.` `/` `?` `°` |
+| 57–60 | `♥` `♦` `♣` `♠` |
+| 61–62 | `★` `☆` |
+| 63–66 | `←` `↑` `→` `↓` |
+| 67–69 | `·` `■` `○` |
+| 70 | Reserved (blank) |
+| 71–77 | Color tiles: Red, Orange, Yellow, Green, Blue, Violet, White |
 
 ---
 
@@ -444,62 +444,107 @@ All keys are optional — the app works without any of them.
 ```
 FlipperBoards/
 ├── backend/
-│   ├── main.py              # FastAPI app, WebSocket, rotation loop, all API routes
-│   ├── database.py          # SQLite schema + async CRUD (aiosqlite)
+│   ├── main.py              # FastAPI app, WebSocket, rotation loops, all API routes
+│   ├── database.py          # SQLite schema + async CRUD (aiosqlite, WAL)
+│   ├── mqtt_bridge.py       # MQTT control + Home Assistant discovery
+│   ├── mode_registry.py     # Pluggable display-mode registry
 │   ├── websocket_manager.py # Per-screen WebSocket connection groups
 │   ├── charmap.py           # Vestaboard character set, text→matrix
-│   ├── config.py            # Settings via FB_ environment variables
+│   ├── config.py            # Startup settings via FB_ environment variables
+│   ├── plugins/             # Optional plugin modes (see PLUGINS.md)
 │   ├── services/
 │   │   ├── clock.py         # Live time/date matrix rendering
 │   │   ├── weather.py       # OpenWeatherMap + Open-Meteo fallback
 │   │   ├── news.py          # NewsAPI + RSS fallback
 │   │   ├── quotes.py        # ZenQuotes API + built-in fallback
 │   │   ├── calendar_svc.py  # iCal parsing
+│   │   ├── scoreboard.py    # Team-score matrix rendering
 │   │   └── text_svc.py      # Rotating text messages
-│   ├── uploads/             # Uploaded photos (served as /uploads/*)
-│   └── flipperboards.db     # SQLite (auto-created on first run)
+│   └── tests/               # pytest suite (run: pytest backend/tests)
 │
 ├── frontend/src/
 │   ├── components/
 │   │   ├── DisplayView.jsx          # Full-screen display, wake lock, kiosk mode
-│   │   ├── SplitFlapDisplay.jsx     # Grid renderer
+│   │   ├── SplitFlapDisplay.jsx     # Grid renderer + sweep stagger
 │   │   ├── FlapTile.jsx             # CSS 3D animation + Web Audio flip sound
 │   │   ├── ColorTile.jsx            # RGB color tile with lerp transitions
 │   │   ├── PhotoTile.jsx            # CSS background-position photo split
+│   │   ├── Toast.jsx                # App-wide error/success toasts
 │   │   └── remote/
 │   │       ├── RemoteControl.jsx    # Tabbed remote control shell
 │   │       ├── ScreenManager.jsx    # Create/edit/delete screens
-│   │       ├── ModeSelector.jsx     # Enable/disable/reorder modes
-│   │       ├── TextInput.jsx        # Text message queue
-│   │       ├── ImageUpload.jsx      # Immediate image push (4 modes)
-│   │       ├── UniversalPlaylist.jsx # Content playlist builder
-│   │       └── SettingsPanel.jsx    # Theme + physical frame settings
+│   │       ├── ModeSelector.jsx     # Enable/disable/configure modes
+│   │       ├── TextInput.jsx        # Text push with live preview
+│   │       ├── ImageUpload.jsx      # Image push (4 modes) + library
+│   │       ├── ScreenDesigner.jsx   # Tile-by-tile editor, icon stamps, undo
+│   │       ├── UniversalPlaylist.jsx # Playlist builder, drag reorder, scoreboards
+│   │       ├── DurationPicker.jsx   # Shared duration control
+│   │       └── SettingsPanel.jsx    # Theme, MQTT, physical frame settings
 │   ├── hooks/
 │   │   ├── useWebSocket.js          # Auto-reconnecting WebSocket
 │   │   └── useDisplayState.js       # Unified display state
+│   ├── data/icons.js                # Curated FontAwesome icon catalog
 │   └── utils/
+│       ├── api.js                   # fetch wrapper with error propagation
 │       ├── audio.js                 # Web Audio synthesized flip sound
-│       ├── charmap.js               # Client-side character map
+│       ├── charmap.js               # Client-side character map + preview
+│       ├── iconStamp.js             # FA icon → tile matrix rendering
 │       └── imageToMatrix.js         # Canvas image → matrix/color-matrix
 │
-├── setup.sh                 # Pi setup script
-├── flipperboards.service    # systemd unit file
+├── android/                 # WebView kiosk app (APK built by CI)
+├── deploy/
+│   ├── install.sh           # Linux systemd install (backend + auto-updater)
+│   ├── update.sh            # Git-poll auto-updater (rebuilds frontend)
+│   ├── start.ps1            # Windows dev auto-reload script
+│   ├── pi-kiosk/            # Raspberry Pi fullscreen-browser client
+│   └── pi-appctl/           # MQTT multi-app switcher for shared Pis
+├── unraid/                  # Unraid Community Applications template
+├── setup.sh                 # Bare-metal first-time setup (venv + build)
 ├── Dockerfile               # Multi-stage build
-└── docker-compose.yml       # Compose with persistent data volumes
+└── docker-compose.yml       # Compose with persistent /data volume
 ```
 
 ### Environment variables
 
+Startup configuration (`.env` file or environment; all optional):
+
 ```bash
-FB_HOST=0.0.0.0
-FB_PORT=8000
+FB_HOST=0.0.0.0            # bind address
+FB_PORT=8000               # port
 FB_DB_PATH=flipperboards.db
-FB_DEFAULT_ROWS=6
+FB_UPLOAD_DIR=uploads      # photo storage directory
+FB_DEFAULT_ROWS=6          # dimensions for newly created screens
 FB_DEFAULT_COLS=22
+FB_WEATHER_API_KEY=        # fallback when the UI setting is empty
+FB_NEWS_API_KEY=           # fallback when the UI setting is empty
+FB_PLUGINS=                # comma-separated plugin names (see PLUGINS.md)
 ```
+
+Runtime settings (theme, MQTT, rotation, API keys…) live in the database and
+are edited in the **Config** tab — see the Settings Reference above.
+
+---
+
+## Development
+
+```bash
+# Backend tests + lint
+pip install -r backend/requirements-dev.txt
+cd backend && pytest tests && ruff check .
+
+# Frontend dev server (proxies /api and /ws to :8000)
+cd frontend && npm install && npm run dev
+```
+
+CI runs the test suite and a production frontend build on every push and PR.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved, and
+[PLUGINS.md](PLUGINS.md) for writing custom display modes.
 
 ---
 
 ## License
 
-FlipperBoards Sustainable Use License — free to self-host, commercial hosted service requires a license. See [LICENSE.md](LICENSE.md).
+FlipperBoards is **source-available** under the FlipperBoards Sustainable Use
+License — free to self-host and modify for your own use (including in a
+commercial environment); offering it as a hosted service to third parties
+requires a commercial license. See [LICENSE.md](LICENSE.md).

@@ -253,6 +253,8 @@ export default function RemoteControl() {
             <TextInput
               key={`${activeScreenId}-${refreshKey}`}
               screenId={activeScreenId}
+              rows={rows}
+              cols={cols}
               onRefresh={refresh}
             />
           )}
