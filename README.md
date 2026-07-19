@@ -9,8 +9,10 @@ A Vestaboard-style split-flap display application. Run it on a Raspberry Pi conn
 - **Authentic split-flap animation** — CSS 3D fold/rise keyframes, Web Audio synthesized flip sounds, per-column stagger timing, full-board sweep transitions
 - **Vestaboard character set** — codes 0–77: A–Z, digits, punctuation, hearts/stars/arrows/shapes (`♥ ★ → ■ ○ °`…), and 7 color tiles
 - **Multiple independent screens** — each screen has its own URL, mode rotation, playlist, and WebSocket group; cast any screen to any TV
-- **Six auto-rotation modes** — Clock, Weather, News, Quotes, Calendar, Text Messages
-- **Content playlist** — arrange any content in any order with per-item durations; mixes modes, custom text, and photos
+- **Ten auto-rotation modes** — Clock, Weather, News, Quotes, Calendar, Sports, Countdown, Stocks, Data Feed, Text Messages
+- **Content playlist** — arrange any content in any order with per-item durations; mixes modes, custom text, photos, scoreboards, and menus
+- **Dayparting** — per-item time windows show a lunch menu at lunch and a dinner menu at dinner, automatically
+- **Colored text** — `{red}HAPPY HOUR{/}` markup colors individual letters — something a physical board can't do
 - **Image display** — four modes: Photo Split (puzzle), Full Color (RGB mosaic), 8-Color Mosaic (Vestaboard palette), Monochrome (character density)
 - **Physical frame mode** — configurable gap width and color between tiles to simulate wooden dowel rods
 - **Theming** — 5 built-in presets + custom color pickers for tile text, tile background, and board background
@@ -179,6 +181,9 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
 | Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) |
 | Sports | Live game scores (NFL, NBA, MLB, NHL, college, MLS, EPL) — no API key needed |
+| Countdown | Days / hours:minutes:seconds to any date (or count up since one) — seconds tick live |
+| Stocks | Stock & crypto prices with % change and green/red direction tiles — no API key needed |
+| Data Feed | Poll any JSON URL and render a template — follower counts, sensors, anything |
 | Text Messages | Custom messages managed in the **Text** tab |
 
 **Sports mode** rotates through the day's games with live scores and game
@@ -186,17 +191,57 @@ clocks. Set a **team filter** in the mode's ⚙ config to stay locked on one
 game — as the score changes, only the digits flip, just like a real stadium
 board. Scores refresh with the rotation interval (60s API cache).
 
+**Countdown mode** counts down to a target date (`2027-01-01 00:00`) with an
+optional label and a custom finish message — or counts up *since* a date.
+The clock line re-renders every second, so only the second digits flip.
+
+**Stocks mode** takes a comma-separated symbol list (`AAPL, MSFT, BTC-USD` —
+Yahoo Finance symbols, crypto included) and shows one row per symbol with the
+price, % change vs previous close, and a green/red accent tile per direction.
+More symbols than rows pages automatically.
+
+**Data Feed mode** polls any JSON URL every 2 minutes and renders a template
+with `{dot.path.0.notation}` placeholders into the response — subscriber
+counts, temperature sensors, home-automation values. Example: URL
+`https://api.example.com/stats`, template `SUBS {data.followers}`. The server
+fetches whatever URL an authenticated operator configures, so treat it like
+any admin setting and deploy on a trusted network.
+
 ---
 
 ## Content Playlist
 
 The **Playlist** tab builds an ordered sequence of any content type. When the playlist has items it completely replaces the Modes rotation — each item has its own duration and the sequence loops forever.
 
-**Item types:** Mode, Text (custom message), Photo (split across tiles)
+**Item types:** Mode, Text (custom message), Photo (split across tiles), Score
+(live scoreboard), Menu (dot-leader price list)
 
 **Example:** `Text (20s) → Weather (30s) → News (30s) → Text (20s) → Photo (15s) → repeat`
 
 Remove all playlist items to return to the Modes rotation.
+
+### Time windows (dayparting)
+
+Every playlist item can carry a time window (the ⏱ button on its row): start
+time, end time, and weekdays. Outside its window the item is skipped —
+the rotation flows through the remaining items. A bar's playlist can hold both
+the lunch menu (`11:00–16:00`) and the dinner menu (`16:00–23:00`) and always
+show the right one. Overnight windows (`22:00–02:00`) work naturally. If
+every item is out of its window the board falls back to the clock.
+
+### Menu items
+
+The **Menu** item type renders a title plus name/price entries with
+dot leaders and right-aligned prices:
+
+```
+      HAPPY HOUR
+WELLS··············4.50
+DRAFTS·············5.00
+WINGS··············9.99
+```
+
+More entries than rows paginate each time the item comes around.
 
 ### Scoreboard items
 
@@ -247,6 +292,10 @@ All endpoints accept `?screen=<id>` (default: `main`).
 POST /api/display/text
 { "text": "HELLO WORLD" }
 ```
+Color individual letters with markup — `{red}HAPPY HOUR{/} 5-7PM` renders
+"HAPPY HOUR" in red. Colors: red, orange, yellow, green, blue, violet, white.
+Works in pushed text and playlist text items; the Text tab preview shows it
+live.
 
 ```http
 POST /api/display/matrix
