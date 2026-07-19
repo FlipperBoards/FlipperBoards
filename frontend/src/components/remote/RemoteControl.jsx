@@ -109,7 +109,7 @@ export default function RemoteControl() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeScreenId = searchParams.get('screen') || 'main'
 
-  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected } =
+  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, textColors } =
     useDisplayState(activeScreenId)
 
   const [activeTab, setActiveTab] = useState('display')
@@ -210,6 +210,7 @@ export default function RemoteControl() {
                 dividerWidth={Math.max(1, Math.floor(dividerWidth / 2))}
                 dividerColor={dividerColor}
                 physicalMode={physicalMode}
+                textColors={textColors}
               />
             </div>
           </div>

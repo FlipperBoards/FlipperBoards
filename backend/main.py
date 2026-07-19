@@ -27,7 +27,7 @@ import database
 import mode_registry
 import plugins as plugin_registry
 from websocket_manager import manager
-from charmap import blank_matrix, text_to_matrix
+from charmap import blank_matrix, text_to_matrix, text_to_matrix_colored
 from config import settings
 
 
@@ -110,6 +110,7 @@ class ScreenState:
         self.cols = cols
         self.matrix: list[list[int]] = blank_matrix(rows, cols)
         self.color_matrix: list[list[str]] | None = None
+        self.text_colors: list | None = None  # per-tile text color overrides (markup)
         self.photo_url: str | None = None
         # Universal playlist — drives rotation when non-empty
         self.playlist_items: list[dict] = []
@@ -181,6 +182,15 @@ def _register_builtin_modes():
             team=config.get("team", ""),
             screen_id=config.get("_screen_id", "main"))
 
+    async def render_countdown(rows, cols, config, s):
+        from services.countdown import get_countdown_matrix
+        return get_countdown_matrix(rows, cols,
+            target=config.get("target", ""),
+            label=config.get("label", ""),
+            done_text=config.get("done_text", ""),
+            count_up=config.get("count_up", "no") == "yes",
+            timezone=s.get("timezone", "UTC"))
+
     _text_schema = {
         "message": {
             "type": "textarea",
@@ -196,6 +206,31 @@ def _register_builtin_modes():
             "placeholder": "Enter one quote per line…\nLeave blank to use built-in quotes.",
             "help": "Optional. Overrides built-in quotes when filled in.",
         }
+    }
+    _countdown_schema = {
+        "target": {
+            "type": "text",
+            "label": "Target Date & Time",
+            "placeholder": "2027-01-01 00:00",
+            "help": "YYYY-MM-DD HH:MM in your configured timezone.",
+        },
+        "label": {
+            "type": "text",
+            "label": "Label",
+            "placeholder": "NEW YEARS",
+        },
+        "done_text": {
+            "type": "text",
+            "label": "When Finished",
+            "placeholder": "IT'S TIME!",
+        },
+        "count_up": {
+            "type": "select",
+            "label": "Direction",
+            "options": [{"value": "no", "label": "Count down to the date"},
+                        {"value": "yes", "label": "Count up since the date"}],
+            "default": "no",
+        },
     }
     from services.sports import LEAGUES
     _sports_schema = {
@@ -219,6 +254,7 @@ def _register_builtin_modes():
         ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    config_schema=_quotes_schema, render=render_quotes),
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
         ModeDefinition("sports",   "Sports",        "🏆", "Live game scores",        config_schema=_sports_schema, render=render_sports),
+        ModeDefinition("countdown", "Countdown",     "⏳", "Count down to a date",    config_schema=_countdown_schema, render=render_countdown),
         ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
     ]
     for m in builtin:
@@ -258,6 +294,7 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
     content = item.get("content", {})
 
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
 
     if item_type == "mode":
@@ -272,7 +309,8 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
 
     elif item_type == "text":
         state.mode = "text_push"
-        state.matrix = text_to_matrix(content.get("text", ""), state.rows, state.cols)
+        state.matrix, state.text_colors = text_to_matrix_colored(
+            content.get("text", ""), state.rows, state.cols)
 
     elif item_type == "photo":
         state.mode = "photo_push"
@@ -357,6 +395,7 @@ async def advance_screen_mode(screen_id: str):
     mode_name = mode_entry["mode"]
     state.mode = mode_name
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
 
     state.matrix = await _render_mode(
@@ -392,6 +431,10 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
             "mode": state.mode,
             "screen_id": state.screen_id,
         }
+        # Per-tile text colors only apply to text content — gating by mode
+        # means stale color maps can never leak into other modes
+        if state.text_colors and state.mode in ("text_push", "text"):
+            msg["text_colors"] = state.text_colors
         if transition:
             msg["transition"] = transition
         await manager.broadcast(state.screen_id, msg)
@@ -419,6 +462,8 @@ async def _persist_screen_state(state: ScreenState) -> None:
             "photo_url": state.photo_url,
             "playlist_pos": state.playlist_pos,
         }
+        if state.text_colors and state.mode in ("text_push", "text"):
+            snapshot["text_colors"] = state.text_colors
     blob = json.dumps(snapshot)
     if _last_persisted.get(state.screen_id) == blob:
         return
@@ -493,6 +538,7 @@ async def _sleep_screen(state: ScreenState) -> None:
     state.mode = "sleep"
     state.matrix = blank_matrix(state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     await _broadcast_screen(state)
 
@@ -583,7 +629,7 @@ async def _rotation_loop(screen_id: str):
 
 
 async def _clock_tick_loop():
-    """Global 1-second tick — updates all screens currently in clock mode."""
+    """Global 1-second tick — live-updates clock and countdown screens."""
     while True:
         try:
             await asyncio.sleep(1)
@@ -597,6 +643,16 @@ async def _clock_tick_loop():
                         show_date=db_settings.get("show_date", "true") == "true",
                         timezone=db_settings.get("timezone", "UTC"),
                     )
+                    state.color_matrix = None
+                    state.photo_url = None
+                    await _broadcast_screen(state)
+                elif state.mode == "countdown":
+                    # Re-render each second so the seconds digits flip live
+                    mode_entries = await database.get_modes(sid)
+                    entry = next((m for m in mode_entries if m["mode"] == "countdown"), None)
+                    state.matrix = await _render_mode(
+                        "countdown", state.rows, state.cols, db_settings,
+                        screen_id=sid, mode_config=entry.get("config", {}) if entry else {})
                     state.color_matrix = None
                     state.photo_url = None
                     await _broadcast_screen(state)
@@ -675,6 +731,7 @@ async def lifespan(app: FastAPI):
             state.mode = saved["mode"]
             state.photo_url = saved.get("photo_url")
             state.color_matrix = saved.get("color_matrix")
+            state.text_colors = saved.get("text_colors")
             if saved.get("matrix"):
                 state.matrix = _normalize_matrix(saved["matrix"], state.rows, state.cols)
             _restored_push_screens.add(sid)
@@ -1207,13 +1264,15 @@ async def get_state(screen: str = Query(default="main")):
         "photo_url": state.photo_url,
         "playlist_active": bool(state.playlist_items),
         "playlist_pos": state.playlist_pos,
+        "text_colors": state.text_colors if state.mode in ("text_push", "text") else None,
     }
 
 
 @app.post("/api/display/text")
 async def push_text(content: DisplayContent, screen: str = Query(default="main")):
     state = get_screen_state(screen)
-    state.matrix = text_to_matrix(content.text, state.rows, state.cols)
+    state.matrix, state.text_colors = text_to_matrix_colored(
+        content.text, state.rows, state.cols)
     state.color_matrix = None
     state.photo_url = None
     state.mode = "text_push"
@@ -1227,6 +1286,7 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state = get_screen_state(screen)
     state.matrix = _normalize_matrix(content.matrix, state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.mode = "matrix_push"
     _schedule_revert(state, screen, content.duration)
@@ -1296,6 +1356,7 @@ async def blank_display(screen: str = Query(default="main")):
     state = get_screen_state(screen)
     state.matrix = blank_matrix(state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.mode = "blank"
     # Blank behaves like a push with no duration: rotation pauses so the
@@ -1327,6 +1388,7 @@ async def push_mode(content: ModeContent, screen: str = Query(default="main")):
     mode_config = mode_entry.get("config", {}) if mode_entry else {}
     state.mode = mode
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings,
                                       screen_id=screen, mode_config=mode_config)
@@ -1539,6 +1601,7 @@ async def push_design(design_id: int, screen: str = Query(default="main"),
     state = get_screen_state(screen)
     state.matrix = _normalize_matrix(design["matrix"], state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.mode = "matrix_push"
     _schedule_revert(state, screen, duration)
@@ -1686,14 +1749,17 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
                 "screen_id": screen,
             })
         else:
-            initial_msgs.insert(0, {
+            initial = {
                 "type": "display_update",
                 "matrix": state.matrix,
                 "rows": state.rows,
                 "cols": state.cols,
                 "mode": state.mode,
                 "screen_id": screen,
-            })
+            }
+            if state.text_colors and state.mode in ("text_push", "text"):
+                initial["text_colors"] = state.text_colors
+            initial_msgs.insert(0, initial)
 
     import json as _json
     for msg in initial_msgs:
