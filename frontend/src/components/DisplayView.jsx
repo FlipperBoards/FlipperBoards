@@ -35,10 +35,13 @@ export default function DisplayView() {
   const screenId = searchParams.get('screen') || 'main'
   const kiosk = searchParams.get('kiosk') === '1'
   // Canvas renderer is the default — smooth on weak hardware (Pi 3).
-  // ?renderer=dom falls back to the CSS tile renderer; ?scale=0.75 renders
-  // the canvas at reduced resolution for even weaker boards.
+  // ?renderer=dom falls back to the CSS tile renderer. ?scale=0.75 and
+  // ?fps=20 pin resolution/tick rate (otherwise the engine adapts itself).
   const useDomRenderer = searchParams.get('renderer') === 'dom'
-  const renderScale = parseFloat(searchParams.get('scale')) || 1
+  const scaleParam = parseFloat(searchParams.get('scale'))
+  const renderScale = Number.isFinite(scaleParam) ? scaleParam : null
+  const fpsParam = parseInt(searchParams.get('fps'), 10)
+  const tickFps = Number.isFinite(fpsParam) ? fpsParam : null
 
   const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce, textColors } = useDisplayState(screenId)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -175,6 +178,7 @@ export default function DisplayView() {
           sweepNonce={sweepNonce}
           textColors={textColors}
           renderScale={renderScale}
+          tickFps={tickFps}
         />
       )}
 

@@ -1,16 +1,32 @@
-// Pre-rendered split-flap character sprites for the canvas renderer.
+// Pre-rendered split-flap sprites for the canvas renderer.
 //
 // Every character card is drawn ONCE per (size, theme, text-color) into an
-// offscreen atlas — the animation loop then just blits halves of these
-// sprites, so the per-frame cost is a handful of drawImage calls no matter
-// how weak the GPU is (Raspberry Pi 3 target).
+// offscreen atlas — including the mid-flip POSES, so the animation loop is
+// nothing but same-size alpha blits (no runtime scaling, no fillRects, no
+// gradient/string allocation). That keeps a full-board cascade inside a
+// Raspberry Pi 3's software-raster budget.
 //
-// The Vestaboard look is baked into the sprite itself: matte card face with
+// Atlas layout per color variant (one canvas, 3 rows × 78 columns):
+//   row FACE — the full card: matte face, rounded corners, split line, glyph
+//   row FALL — overlay: the char's top half folded ~55° toward the hinge,
+//              with baked turn-darkening and a baked shadow on the lower half
+//   row RISE — overlay: the char's bottom half partially risen from the
+//              hinge, with baked landing highlight and fading lower shadow
+//
+// The Vestaboard look is baked into the face sprite itself: matte card with
 // rounded corners, a vertical sheen that suggests the curved flap, and the
 // horizontal split line through the middle where the two flaps meet.
 import { CHARS, COLOR_HEX, isColorCode, codeToChar } from './charmap'
 
 const FONT_FAMILY = '"Bebas Neue", "Share Tech Mono", monospace'
+
+// Row indices — exported for the renderer's blit math
+export const ROW_FACE = 0
+export const ROW_FALL = 1
+export const ROW_RISE = 2
+
+const FALL_SCALE = Math.cos(55 * Math.PI / 180)  // ≈ 0.57 — flap folded ~55°
+const RISE_SCALE = Math.sin(50 * Math.PI / 180)  // ≈ 0.77 — flap mostly risen
 
 function roundedRectPath(ctx, x, y, w, h, r) {
   ctx.beginPath()
@@ -75,6 +91,7 @@ function drawVariant(canvas, tileW, tileH, bgColor, textColor) {
   ctx.textBaseline = 'middle'
   ctx.font = `${fs}px ${FONT_FAMILY}`
 
+  // ── Row FACE: full card faces ──
   for (let code = 0; code < CHARS.length; code++) {
     const x = code * tileW
     if (isColorCode(code)) {
@@ -87,10 +104,39 @@ function drawVariant(canvas, tileW, tileH, bgColor, textColor) {
     if (ch !== ' ') {
       ctx.fillStyle = textColor
       // Bebas Neue's middle baseline sits high — nudge down for optical center
-      ctx.font = `${fs}px ${FONT_FAMILY}`
       ctx.fillText(ch, x + tileW / 2, tileH / 2 + fs * 0.045, tileW * 0.94)
     }
     drawSplitLine(ctx, x, 0, tileW, tileH)
+  }
+
+  // ── Pose rows — sample the face row we just drew, all shading baked ──
+  const half = tileH / 2
+  for (let code = 0; code < CHARS.length; code++) {
+    const x = code * tileW
+
+    // Row FALL: shadow thrown on the lower half, then the top half of this
+    // char folded toward the hinge and darkened as it turns away
+    {
+      const y = ROW_FALL * tileH
+      ctx.fillStyle = 'rgba(0,0,0,0.16)'
+      ctx.fillRect(x, y + half, tileW, half)
+      const fh = Math.max(1, Math.round(half * FALL_SCALE))
+      ctx.drawImage(canvas, x, 0, tileW, half, x, y + half - fh, tileW, fh)
+      ctx.fillStyle = 'rgba(0,0,0,0.26)'
+      ctx.fillRect(x, y + half - fh, tileW, fh)
+    }
+
+    // Row RISE: fading shadow on the lower half, then the bottom half of
+    // this char mostly risen into place, still catching the light
+    {
+      const y = ROW_RISE * tileH
+      ctx.fillStyle = 'rgba(0,0,0,0.10)'
+      ctx.fillRect(x, y + half, tileW, half)
+      const fh = Math.max(1, Math.round(half * RISE_SCALE))
+      ctx.drawImage(canvas, x, half, tileW, half, x, y + half, tileW, fh)
+      ctx.fillStyle = 'rgba(255,255,255,0.06)'
+      ctx.fillRect(x, y + half, tileW, fh)
+    }
   }
 }
 
@@ -99,8 +145,8 @@ function drawVariant(canvas, tileW, tileH, bgColor, textColor) {
  * text colors are rendered lazily — the palette is bounded (default + 7).
  *
  * `canvasFor(color)` returns the atlas canvas whose glyphs use that text
- * color; source rect for a code is (code * tileW, 0, tileW, tileH), halves
- * are the top/bottom tileH/2 of that rect.
+ * color. Source rect for a code is (code * tileW, row * tileH, tileW, tileH)
+ * with row one of ROW_FACE / ROW_FALL / ROW_RISE.
  */
 export function buildAtlas({ tileW, tileH, bgColor, textColor }) {
   tileW = Math.max(2, Math.round(tileW))
@@ -113,7 +159,7 @@ export function buildAtlas({ tileW, tileH, bgColor, textColor }) {
     if (!canvas) {
       canvas = document.createElement('canvas')
       canvas.width = tileW * CHARS.length
-      canvas.height = tileH
+      canvas.height = tileH * 3
       drawVariant(canvas, tileW, tileH, bgColor, key)
       variants.set(key, canvas)
     }

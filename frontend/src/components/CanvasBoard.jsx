@@ -1,15 +1,38 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { isColorCode } from '../utils/charmap'
 import { nextRingCode, RING_SIZE } from '../utils/flipSequence'
-import { buildAtlas, ensureFontLoaded, drawColorCard } from '../utils/flapAtlas'
+import { buildAtlas, ensureFontLoaded, drawColorCard, ROW_FALL, ROW_RISE } from '../utils/flapAtlas'
 import { playFlipClack } from '../utils/audio'
 
 // Canvas split-flap renderer — one <canvas>, a sprite atlas, one rAF loop.
-// Built for weak hardware (Raspberry Pi 3): no DOM/React work in the
-// animation path, dirty-rect repaints, 1:1 sprite blits, and the loop stops
-// completely when no tile is moving.
+//
+// Built for weak hardware (Raspberry Pi 3):
+// - every draw is a same-size alpha blit of a pre-rendered sprite (mid-flip
+//   poses included) — no runtime scaling, no fillRects, no allocation
+// - the loop draws on a bounded TICK (30fps down to 15fps), independent of
+//   flap speed; between ticks the rAF callback just re-schedules
+// - an adaptive ladder degrades tick rate, then internal resolution, when
+//   the device can't keep up — and remembers the settled rung
+// - the loop stops completely when no tile is moving
 
 const RESERVED_CODE = 70
+
+// Degradation ladder: tick rate first (cheap, barely visible), then internal
+// resolution (crispness trade). Never climbs back up mid-session.
+const RUNGS = [
+  { fps: 30, scale: 1 },
+  { fps: 20, scale: 1 },
+  { fps: 20, scale: 0.75 },
+  { fps: 15, scale: 0.5 },
+]
+const RUNG_KEY = 'fb:renderRung'
+
+function savedRung() {
+  try {
+    const r = parseInt(localStorage.getItem(RUNG_KEY), 10)
+    return r >= 0 && r < RUNGS.length ? r : 0
+  } catch { return 0 }
+}
 
 function ringBack(code, steps, skipColors = true) {
   let idx = code
@@ -23,9 +46,6 @@ function ringBack(code, steps, skipColors = true) {
   }
   return idx
 }
-
-const easeIn = (t) => t * t             // gravity: the flap accelerates as it falls
-const easeOut = (t) => 1 - (1 - t) * (1 - t)
 
 export default function CanvasBoard({
   matrix = [],
@@ -41,15 +61,28 @@ export default function CanvasBoard({
   textColors = null,
   soundEnabled = true,
   flipDuration = 120,
-  renderScale = 1,       // <1 renders at lower resolution, upscaled by CSS — Pi tuning knob
+  renderScale = null,    // explicit ?scale= override — disables the adaptive ladder
+  tickFps = null,        // explicit ?fps= override — disables the adaptive ladder
 }) {
   const canvasRef = useRef(null)
-  const tilesRef = useRef([])          // [{current, target, color, flapStart, jitter}]
+  const ctxRef = useRef(null)
+  const tilesRef = useRef([])          // [{current, target, flapStart, jitter}]
   const layoutRef = useRef(null)       // {tileW, tileH, gap, padX, padY} device px
   const atlasRef = useRef(null)
   const rafRef = useRef(null)
   const photoRef = useRef({ url: null, img: null })
   const prevSweepRef = useRef(sweepNonce)
+
+  const adaptive = renderScale == null && tickFps == null
+  const [rung, setRung] = useState(() => (adaptive ? savedRung() : 0))
+  const rungRef = useRef(rung)
+  rungRef.current = rung
+  const effectiveScale = renderScale ?? RUNGS[rung].scale
+  const fpsRef = useRef(30)
+  fpsRef.current = tickFps ?? RUNGS[rung].fps
+
+  // Tick pacing + adaptation state — plain refs, no React in the hot path
+  const paceRef = useRef({ lastTick: 0, prevAnimTick: 0, slowTicks: 0, lastDegrade: 0 })
 
   // Live prop mirrors so the rAF loop never closes over stale values
   const flapMsRef = useRef(flipDuration)
@@ -67,7 +100,17 @@ export default function CanvasBoard({
   const matrixRef = useRef(matrix)
   matrixRef.current = matrix
 
-  // ── Drawing ────────────────────────────────────────────────────────────────
+  const getCtx = () => {
+    if (!ctxRef.current && canvasRef.current) {
+      // Opaque + desynchronized: skips whole-layer alpha compositing and,
+      // where supported, the compositor round-trip — both matter in
+      // software rasterization
+      ctxRef.current = canvasRef.current.getContext('2d', { alpha: false, desynchronized: true })
+    }
+    return ctxRef.current
+  }
+
+  // ── Drawing (all 1:1 blits) ────────────────────────────────────────────────
 
   const tileXY = (r, c) => {
     const { tileW, tileH, gap, padX, padY } = layoutRef.current
@@ -87,42 +130,16 @@ export default function CanvasBoard({
     const src = atlasRef.current.canvasFor(colorsRef.current?.[r]?.[c] || null)
     const half = tileH / 2
     const from = tile.current
-    const skip = !isColorCode(tile.target)
-    const to = nextRingCode(from, skip)
+    const to = nextRingCode(from, !isColorCode(tile.target))
 
-    // Revealed top: incoming char. Static bottom: outgoing char (covered later).
+    // Revealed top: incoming char. Static bottom: outgoing char.
     ctx.drawImage(src, to * tileW, 0, tileW, half, x, y, tileW, half)
     ctx.drawImage(src, from * tileW, half, tileW, half, x, y + half, tileW, half)
-
-    if (p < 0.5) {
-      // Top flap of the outgoing char folds down toward the hinge
-      const q = easeIn(p * 2)
-      const sy = Math.cos(q * Math.PI / 2)
-      const fh = half * sy
-      if (fh >= 1) {
-        ctx.drawImage(src, from * tileW, 0, tileW, half, x, y + (half - fh), tileW, fh)
-        // The card turns away from the light as it falls
-        ctx.fillStyle = `rgba(0,0,0,${(q * 0.45).toFixed(3)})`
-        ctx.fillRect(x, y + (half - fh), tileW, fh)
-      }
-      // Falling flap throws a soft shadow on the lower half
-      ctx.fillStyle = `rgba(0,0,0,${(q * 0.28).toFixed(3)})`
-      ctx.fillRect(x, y + half, tileW, half)
-    } else {
-      // Bottom flap of the incoming char swings down into place
-      const q = easeOut((p - 0.5) * 2)
-      const sy = Math.sin(q * Math.PI / 2)
-      const fh = half * sy
-      // Shadow fades as the flap seats
-      ctx.fillStyle = `rgba(0,0,0,${((1 - q) * 0.28).toFixed(3)})`
-      ctx.fillRect(x, y + half, tileW, half)
-      if (fh >= 1) {
-        ctx.drawImage(src, to * tileW, half, tileW, half, x, y + half, tileW, fh)
-        // Catches light while still angled toward the viewer
-        ctx.fillStyle = `rgba(255,255,255,${((1 - q) * 0.10).toFixed(3)})`
-        ctx.fillRect(x, y + half, tileW, fh)
-      }
-    }
+    // One pre-rendered pose overlay: outgoing top folding, or incoming
+    // bottom rising — shadows and highlights are baked into the sprite
+    const poseRow = p < 0.5 ? ROW_FALL : ROW_RISE
+    const poseCode = p < 0.5 ? from : to
+    ctx.drawImage(src, poseCode * tileW, poseRow * tileH, tileW, tileH, x, y, tileW, tileH)
   }
 
   const drawBoard = (ctx) => {
@@ -151,7 +168,6 @@ export default function CanvasBoard({
   }
 
   const drawPhoto = (ctx) => {
-    const canvas = canvasRef.current
     const { tileW, tileH, gap, padX, padY } = layoutRef.current
     const img = photoRef.current.img
     const boardW = cols * tileW + (cols - 1) * gap
@@ -177,7 +193,7 @@ export default function CanvasBoard({
     }
   }
 
-  // ── Animation loop ─────────────────────────────────────────────────────────
+  // ── Animation loop: rAF paced down to a bounded tick rate ──────────────────
 
   // rAF fires into frameRef so a pending callback always runs the latest
   // render's closure — never stale rows/cols/theme after a prop change.
@@ -187,8 +203,34 @@ export default function CanvasBoard({
     if (rafRef.current == null) {
       rafRef.current = requestAnimationFrame((t) => {
         rafRef.current = null
+        const tickMs = 1000 / fpsRef.current
+        if (t - paceRef.current.lastTick < tickMs - 1) {
+          startLoop()   // between ticks: just keep the loop alive (near-free)
+          return
+        }
         frameRef.current?.(t)
       })
+    }
+  }
+
+  const maybeDegrade = (now) => {
+    // Called once per executed tick while animating. Consecutive ticks that
+    // run well over target for ~1s ⇒ the device can't keep up ⇒ step down.
+    const pace = paceRef.current
+    const target = 1000 / fpsRef.current
+    if (pace.prevAnimTick) {
+      const interval = now - pace.prevAnimTick
+      if (interval > target * 1.6) pace.slowTicks++
+      else pace.slowTicks = Math.max(0, pace.slowTicks - 1)
+    }
+    pace.prevAnimTick = now
+    if (adaptive && pace.slowTicks >= fpsRef.current &&
+        now - pace.lastDegrade > 2000 && rungRef.current < RUNGS.length - 1) {
+      pace.slowTicks = 0
+      pace.lastDegrade = now
+      const next = rungRef.current + 1
+      try { localStorage.setItem(RUNG_KEY, String(next)) } catch { /* private mode */ }
+      setRung(next)   // scale rungs rebuild the backing store + atlas
     }
   }
 
@@ -204,9 +246,11 @@ export default function CanvasBoard({
         tile.current = tile.target
         tile.flapStart = 0
       }
+      paceRef.current.prevAnimTick = 0
       return
     }
-    const ctx = canvas.getContext('2d')
+    paceRef.current.lastTick = now
+    const ctx = getCtx()
     let animating = 0
     let landed = 0
 
@@ -215,10 +259,11 @@ export default function CanvasBoard({
         const tile = tiles[r * cols + c]
         if (!tile.flapStart) continue
         const flapMs = flapMsRef.current * tile.jitter
-        // Fast-forward missed flaps (heavy frames, tab was hidden…)
+        // Fast-forward flaps that elapsed since the last tick — sampled
+        // intermediate characters are exactly how a real board blurs
         let p = (now - tile.flapStart) / flapMs
-        if (p > 20) {
-          // Way behind — snap to target instead of a silly catch-up blur
+        if (p > 60) {
+          // Way behind (tab was hidden) — snap instead of a silly catch-up
           tile.current = tile.target
           tile.flapStart = 0
           drawStaticTile(ctx, r, c, tile.current)
@@ -244,7 +289,12 @@ export default function CanvasBoard({
     }
 
     if (landed > 0 && soundRef.current) playFlipClack(landed)
-    if (animating > 0) startLoop()
+    if (animating > 0) {
+      maybeDegrade(now)
+      startLoop()
+    } else {
+      paceRef.current.prevAnimTick = 0
+    }
   }
   frameRef.current = frame
 
@@ -256,17 +306,22 @@ export default function CanvasBoard({
     if (tiles.length !== rows * cols) return
     const m = matrixRef.current
     const now = performance.now()
+    const ctx = getCtx()
     let kicked = false
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const tile = tiles[r * cols + c]
         const code = m[r]?.[c] ?? 0
+        // Unchanged AND settled-or-flying: nothing to do. (A stuck idle tile
+        // with current ≠ target still falls through and gets re-kicked.)
+        if (tile.target === code && !sweep && (tile.flapStart || tile.current === code)) continue
         tile.target = code
         if (isColorCode(code) || isColorCode(tile.current)) {
           // Color cards snap — cascading through the ring would flash
           // characters before the solid color appears
           tile.current = code
           tile.flapStart = 0
+          if (ctx && overlayRef.current.mode === 'flap') drawStaticTile(ctx, r, c, code)
         } else if (sweep && tile.current === code) {
           // Full-board sweep: back the tile a few ring steps so it flips
           // through neighbors and lands on the same character
@@ -280,11 +335,10 @@ export default function CanvasBoard({
         // Mid-flight tiles just keep cascading toward the new target
       }
     }
-    if (overlayRef.current.mode === 'flap') {
-      const ctx = canvasRef.current?.getContext('2d')
-      if (ctx) drawBoard(ctx)   // repaint statics (theme/text-color changes, snaps)
-      if (kicked) startLoop()
-    }
+    // Only tiles that changed are repainted (by the loop, or the snap above) —
+    // the clock broadcasts every second and a full-board repaint each time
+    // is wasted work on weak devices
+    if (kicked && overlayRef.current.mode === 'flap') startLoop()
   }
 
   // ── Layout / atlas lifecycle ───────────────────────────────────────────────
@@ -296,11 +350,13 @@ export default function CanvasBoard({
       const canvas = canvasRef.current
       if (!canvas) return
       const dpr = Math.min(window.devicePixelRatio || 1, 1) *
-        Math.min(1, Math.max(0.3, renderScale))
+        Math.min(1, Math.max(0.3, effectiveScale))
       const cssW = window.innerWidth
       const cssH = window.innerHeight
       canvas.width = Math.max(1, Math.round(cssW * dpr))
       canvas.height = Math.max(1, Math.round(cssH * dpr))
+      const ctx = getCtx()
+      if (ctx) ctx.imageSmoothingEnabled = false  // reset by resize; all blits are 1:1
 
       const gap = Math.round(dividerWidth * dpr)
       const tileW = Math.max(2, Math.floor((canvas.width - (cols - 1) * gap) / cols))
@@ -320,8 +376,7 @@ export default function CanvasBoard({
         }))
       }
       applyMatrix(false)
-      const ctx = canvas.getContext('2d')
-      drawBoard(ctx)
+      if (ctx) drawBoard(ctx)
       startLoop()
     }
 
@@ -333,7 +388,7 @@ export default function CanvasBoard({
       window.removeEventListener('resize', onResize)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, cols, tileColor, tileBgColor, dividerWidth, dividerColor, renderScale])
+  }, [rows, cols, tileColor, tileBgColor, dividerWidth, dividerColor, effectiveScale])
 
   // New content / sweep
   useEffect(() => {
@@ -341,18 +396,25 @@ export default function CanvasBoard({
     prevSweepRef.current = sweepNonce
     applyMatrix(sweep)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matrix, sweepNonce, textColors])
+  }, [matrix, sweepNonce])
+
+  // Markup color changes recolor static glyphs — full repaint (rare)
+  useEffect(() => {
+    const ctx = getCtx()
+    if (ctx && overlayRef.current.mode === 'flap') drawBoard(ctx)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textColors])
 
   // Photo / color overlays
   useEffect(() => {
-    const ctx = canvasRef.current?.getContext('2d')
+    const ctx = getCtx()
     if (!ctx || !layoutRef.current) return
     if (photoUrl) {
       if (photoRef.current.url !== photoUrl) {
         const img = new Image()
         img.onload = () => {
           photoRef.current = { url: photoUrl, img }
-          const c = canvasRef.current?.getContext('2d')
+          const c = getCtx()
           if (c && overlayRef.current.photoUrl === photoUrl) drawBoard(c)
         }
         img.src = photoUrl
@@ -376,6 +438,8 @@ export default function CanvasBoard({
       layout: layoutRef.current,
       looping: rafRef.current != null,
       mode: overlayRef.current.mode,
+      rung: rungRef.current,
+      fps: fpsRef.current,
       animating: tilesRef.current.filter(t => t.flapStart).length,
       tiles: tilesRef.current.map(t => `${t.current}>${t.target}${t.flapStart ? '*' : ''}`),
     })

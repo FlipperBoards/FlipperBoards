@@ -141,17 +141,24 @@ Once running (either option), open these URLs — replace `<ip>` with your Pi's 
 
 **Display tuning parameters** (combine with `&`):
 
-- `scale=0.75` — render the board at reduced resolution (upscaled to fit). Try
-  `0.75` or `0.5` on very weak hardware.
+- `scale=0.75` — pin the internal render resolution (upscaled to fit).
+- `fps=20` — pin the animation tick rate.
 - `renderer=dom` — fall back to the original CSS tile renderer.
 - `sound=0` — disable flip sounds for this display.
 
 The display uses a canvas sprite engine: characters flip through the ring
 just like a real split-flap mechanism (a scoreboard digit going 2→3 is one
-flap; a full message change is a satisfying cascade), and rendering cost is a
-few sprite blits per moving tile — a Raspberry Pi 3 drives a 6×22 board
-smoothly. Fonts are bundled, so displays render identically with no internet
-access.
+flap; a full message change is a satisfying cascade). Every animation frame
+is a handful of pre-rendered sprite blits, drawn on a bounded tick — and the
+engine **tunes itself**: if the device can't hold the tick rate it steps down
+(30→20 fps, then reduced internal resolution) and remembers the setting for
+the next boot. `scale`/`fps` parameters pin it manually instead. Fonts are
+bundled, so displays render identically with no internet access.
+
+**Raspberry Pi tip:** on a Pi 3 driving a 1080p TV, set the HDMI output to
+720p (`hdmi_mode` in `/boot/firmware/config.txt`) — the TV upscales, every
+rendering cost halves, and at TV viewing distance the difference is
+invisible.
 
 ---
 

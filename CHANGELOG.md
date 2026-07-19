@@ -5,6 +5,13 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Changed
+- Canvas engine v2 for weak hardware: mid-flip poses are pre-rendered into
+  the sprite atlas so every animation frame is a few same-size blits (no
+  runtime scaling or per-frame allocation); animation draws on a bounded
+  tick (30 fps) decoupled from flap speed; an adaptive ladder steps down
+  tick rate and internal resolution when the device can't keep up and
+  remembers the settled rung (`?scale=` / `?fps=` pin it manually). Under a
+  Pi-class CPU throttle the frame time dropped ~3× (p95 133 ms → 50 ms)
 - Display view rewritten as a canvas sprite engine — smooth split-flap motion
   on weak hardware (Raspberry Pi 3). Tiles flip through their character ring
   like the real mechanism (authentic cascade), with gravity easing, per-tile
