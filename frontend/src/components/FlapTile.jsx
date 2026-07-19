@@ -1,34 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { CHARS, COLOR_HEX, isColorCode, codeToChar } from '../utils/charmap'
+import { COLOR_HEX, isColorCode, codeToChar } from '../utils/charmap'
+import { nextRingCode, sampledRingPath } from '../utils/flipSequence'
 import { playFlipSound } from '../utils/audio'
-
-// Show every intermediate character for short jumps; sample longer ones to this cap.
-const MAX_INTERMEDIATE = 10
-
-function getIntermediateChars(fromCode, toCode, maxCount = MAX_INTERMEDIATE) {
-  const total = CHARS.length
-  const skipColors = !isColorCode(fromCode) && !isColorCode(toCode)
-  const steps = []
-  let idx = fromCode
-  let count = 0
-  while (idx !== toCode && count < total) {
-    idx = (idx + 1) % total
-    // 70 is reserved (renders as a duplicate blank) — never show it mid-flip
-    if (idx !== toCode && idx !== 70 && !(skipColors && isColorCode(idx))) {
-      steps.push(idx)
-    }
-    count++
-  }
-  if (steps.length <= maxCount) return steps
-  // Long jump: sample evenly so we still show visible progression
-  const stride = Math.ceil(steps.length / maxCount)
-  const sampled = []
-  for (let i = 0; i < steps.length; i += stride) {
-    sampled.push(steps[i])
-    if (sampled.length >= maxCount) break
-  }
-  return sampled
-}
 
 export default function FlapTile({
   code = 0,
@@ -87,14 +60,13 @@ export default function FlapTile({
       intermediates = []
       let idx = fromCode
       const want = Math.min(3, maxIntermediates)
-      let guard = 0
-      while (intermediates.length < want && guard < CHARS.length) {
-        idx = (idx + 1) % CHARS.length
-        if (idx !== toCode && idx !== 70 && !isColorCode(idx)) intermediates.push(idx)
-        guard++
+      while (intermediates.length < want) {
+        idx = nextRingCode(idx)
+        if (idx === toCode) break
+        intermediates.push(idx)
       }
     } else {
-      intermediates = getIntermediateChars(fromCode, toCode, maxIntermediates)
+      intermediates = sampledRingPath(fromCode, toCode, maxIntermediates)
     }
     const sequence = [...intermediates, toCode]
 

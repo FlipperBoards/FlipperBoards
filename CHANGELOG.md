@@ -4,6 +4,21 @@ All notable changes to FlipperBoards are documented here.
 
 ## Unreleased
 
+### Changed
+- Display view rewritten as a canvas sprite engine — smooth split-flap motion
+  on weak hardware (Raspberry Pi 3). Tiles flip through their character ring
+  like the real mechanism (authentic cascade), with gravity easing, per-tile
+  timing jitter, baked-in card styling (rounded flaps, center split, sheen),
+  and a rAF loop that stops completely when the board is idle. The CSS tile
+  renderer remains available via `?renderer=dom`; `?scale=` renders at
+  reduced resolution for very weak boards
+- Fonts are now bundled (@fontsource) instead of loaded from Google Fonts —
+  displays render identically on fully offline networks
+- Pi kiosk launcher enables GPU rasterization flags (Chromium blocklists the
+  Pi's GPU by default)
+- Flip sound synthesis reuses a shared noise buffer; the canvas engine plays
+  one clack per frame scaled by how many flaps landed
+
 ### Added
 - Playlist time windows (dayparting): every playlist item can carry a start
   time, end time, and weekday selection — the lunch menu shows at lunch, the
