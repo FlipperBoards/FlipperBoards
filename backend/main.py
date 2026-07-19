@@ -296,6 +296,16 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
             content.get("home_score", 0), content.get("away_score", 0),
         )
 
+    elif item_type == "menu":
+        from services.menu import get_menu_matrix
+        state.mode = "menu"
+        state.matrix = get_menu_matrix(
+            state.rows, state.cols,
+            title=content.get("title", ""),
+            entries=content.get("entries", []),
+            screen_id=state.screen_id,
+        )
+
     await _broadcast_screen(state, transition=transition)
 
 
@@ -310,10 +320,29 @@ async def advance_screen_mode(screen_id: str):
     # Universal playlist takes priority when items exist
     if state.playlist_items:
         old_pos = state.playlist_pos
-        state.playlist_pos = (state.playlist_pos + 1) % len(state.playlist_items)
-        # Full-board sweep only when the displayed item actually changes
-        await _render_playlist_item(
-            state, transition="sweep" if state.playlist_pos != old_pos else None)
+        n = len(state.playlist_items)
+        now = await _now_local()
+        for step in range(1, n + 1):
+            pos = (old_pos + step) % n
+            if _item_eligible(state.playlist_items[pos], now):
+                state.playlist_pos = pos
+                # Full-board sweep only when the displayed item actually changes
+                await _render_playlist_item(
+                    state, transition="sweep" if pos != old_pos else None)
+                return
+        # Every item is outside its time window — fall back to the clock
+        db_settings = await _effective_settings()
+        from services.clock import get_clock_matrix
+        state.mode = "clock"
+        state.color_matrix = None
+        state.photo_url = None
+        state.matrix = get_clock_matrix(
+            state.rows, state.cols,
+            fmt=db_settings.get("clock_format", "12h"),
+            show_date=db_settings.get("show_date", "true") == "true",
+            timezone=db_settings.get("timezone", "UTC"),
+        )
+        await _broadcast_screen(state)
         return
 
     # Fallback: rotate through enabled modes
@@ -413,24 +442,48 @@ def _parse_hhmm(value: str) -> int | None:
     return None
 
 
-def _in_quiet_window(now, schedule: dict) -> bool:
-    """True when `now` (an aware local datetime) falls inside the screen's
-    quiet window. `days` are the weekdays (0=Mon) the OFF time applies to;
-    overnight windows (off 22:00 → on 06:00) spill into the next morning."""
-    if not schedule.get("enabled"):
-        return False
-    off = _parse_hhmm(schedule.get("off_time", ""))
-    on = _parse_hhmm(schedule.get("on_time", ""))
-    days = schedule.get("days") or list(range(7))
-    if off is None or on is None or off == on:
+def _time_in_window(now, start_hhmm: str, end_hhmm: str, days: list[int]) -> bool:
+    """True when `now` (aware local datetime) is inside [start, end). `days`
+    are weekdays (0=Mon) the START applies to; overnight windows (22:00 →
+    06:00) spill into the next morning."""
+    start = _parse_hhmm(start_hhmm)
+    end = _parse_hhmm(end_hhmm)
+    if start is None or end is None or start == end:
         return False
     minutes = now.hour * 60 + now.minute
-    if off < on:  # same-day window
-        return now.weekday() in days and off <= minutes < on
-    # overnight: after off_time today, or before on_time following an off-day
-    if now.weekday() in days and minutes >= off:
+    if start < end:  # same-day window
+        return now.weekday() in days and start <= minutes < end
+    # overnight: after start today, or before end following a start-day
+    if now.weekday() in days and minutes >= start:
         return True
-    return (now.weekday() - 1) % 7 in days and minutes < on
+    return (now.weekday() - 1) % 7 in days and minutes < end
+
+
+def _in_quiet_window(now, schedule: dict) -> bool:
+    if not schedule.get("enabled"):
+        return False
+    return _time_in_window(now, schedule.get("off_time", ""), schedule.get("on_time", ""),
+                           schedule.get("days") or list(range(7)))
+
+
+async def _now_local():
+    import pytz
+    db_settings = await database.get_settings()
+    try:
+        tz = pytz.timezone(db_settings.get("timezone", "UTC"))
+    except Exception:
+        tz = pytz.utc
+    return datetime.now(tz)
+
+
+def _item_eligible(item: dict, now) -> bool:
+    """A playlist item without a window (or with it disabled) always plays;
+    a windowed item only plays inside its time window."""
+    w = item.get("window") or {}
+    if not w.get("enabled"):
+        return True
+    return _time_in_window(now, w.get("start_time", ""), w.get("end_time", ""),
+                           w.get("days") or list(range(7)))
 
 
 async def _sleep_screen(state: ScreenState) -> None:
@@ -873,15 +926,39 @@ class TextMessage(BaseModel):
     text: str
     duration: int = 30
 
+class PlaylistWindow(BaseModel):
+    """Optional dayparting: the item only plays inside this time window."""
+    enabled: bool = False
+    start_time: str = "11:00"
+    end_time: str = "22:00"
+    days: list[int] = Field(default_factory=lambda: list(range(7)))  # 0=Mon
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _valid_time(cls, v):
+        if _parse_hhmm(v) is None:
+            raise ValueError("must be HH:MM (24h)")
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def _valid_days(cls, v):
+        if any(d < 0 or d > 6 for d in v):
+            raise ValueError("days must be 0-6 (Monday=0)")
+        return sorted(set(v))
+
+
 class PlaylistItemCreate(BaseModel):
-    type: str              # 'mode', 'text', 'photo', 'color', 'matrix', 'scoreboard'
+    type: str              # 'mode', 'text', 'photo', 'color', 'matrix', 'scoreboard', 'menu'
     content: dict          # varies by type
     duration: int = Field(default=30, ge=1, le=86400)
+    window: PlaylistWindow | None = None
 
 class PlaylistItemUpdate(BaseModel):
     type: str
     content: dict
     duration: int = Field(ge=1, le=86400)
+    window: PlaylistWindow | None = None
 
 class PlaylistReorder(BaseModel):
     ids: list[int]
@@ -1326,7 +1403,9 @@ async def get_playlist(screen: str = Query(default="main")):
 @app.post("/api/playlist", status_code=201)
 async def add_playlist_item(body: PlaylistItemCreate, screen: str = Query(default="main")):
     state = get_screen_state(screen)
-    item_id = await database.add_playlist_item(screen, body.type, body.content, body.duration)
+    item_id = await database.add_playlist_item(
+        screen, body.type, body.content, body.duration,
+        window=body.window.model_dump() if body.window else None)
     state.playlist_items = await database.get_playlist_items(screen)
     return {"status": "created", "id": item_id}
 
@@ -1345,7 +1424,9 @@ async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: s
     state = get_screen_state(screen)
     state.playlist_items = await database.get_playlist_items(screen)
     _screen_playlist_item(state, item_id)
-    await database.update_playlist_item(item_id, body.type, body.content, body.duration)
+    await database.update_playlist_item(
+        item_id, body.type, body.content, body.duration,
+        window=body.window.model_dump() if body.window else None)
     state.playlist_items = await database.get_playlist_items(screen)
     # Live-update: if the edited item is on screen now, re-render in place.
     # No transition — only tiles whose character changed will flip.

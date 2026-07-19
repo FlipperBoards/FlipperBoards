@@ -2,6 +2,60 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { apiFetch, apiJson } from '../../utils/api'
 import { useToast } from '../Toast'
 
+const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']  // Monday-first
+const DEFAULT_WINDOW = { enabled: false, start_time: '11:00', end_time: '22:00', days: [0, 1, 2, 3, 4, 5, 6] }
+
+function windowBadge(w) {
+  if (!w?.enabled) return null
+  const days = (w.days?.length === 7) ? '' : ' ' + (w.days || []).map(d => DAY_LABELS[d]).join('')
+  return `⏱ ${w.start_time}–${w.end_time}${days}`
+}
+
+/** Compact time-window editor: start/end times + day picker. */
+function WindowEditor({ value, onChange }) {
+  const w = value || DEFAULT_WINDOW
+  const toggleDay = (d) => {
+    const days = w.days.includes(d) ? w.days.filter(x => x !== d) : [...w.days, d].sort()
+    onChange({ ...w, days })
+  }
+  return (
+    <div className="rounded-lg p-2 space-y-1.5" style={{ border: '1px solid var(--border)' }}>
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={!!w.enabled}
+          onChange={e => onChange({ ...w, enabled: e.target.checked })}
+          className="accent-blue-500" />
+        <span className="text-[10px] font-mono" style={{ color: 'var(--text-2)' }}>
+          Only show during a time window
+        </span>
+      </label>
+      {w.enabled && (
+        <>
+          <div className="flex items-center gap-1.5">
+            <input type="time" value={w.start_time}
+              onChange={e => onChange({ ...w, start_time: e.target.value })}
+              className="fb-input py-0.5 text-[10px]" style={{ width: 86 }} />
+            <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>to</span>
+            <input type="time" value={w.end_time}
+              onChange={e => onChange({ ...w, end_time: e.target.value })}
+              className="fb-input py-0.5 text-[10px]" style={{ width: 86 }} />
+            <div className="flex gap-0.5 ml-1">
+              {DAY_LABELS.map((label, d) => (
+                <button key={d} type="button" onClick={() => toggleDay(d)}
+                  className="w-5 h-5 rounded text-[9px] font-mono transition-colors"
+                  style={w.days.includes(d)
+                    ? { background: 'var(--accent)', color: '#fff' }
+                    : { background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [items, setItems] = useState([])
   const [availableModes, setAvailableModes] = useState([])
@@ -12,7 +66,11 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [addPhoto, setAddPhoto] = useState(null)
   const [addHomeName, setAddHomeName] = useState('')
   const [addAwayName, setAddAwayName] = useState('')
+  const [addMenuTitle, setAddMenuTitle] = useState('')
+  const [addMenuEntries, setAddMenuEntries] = useState([{ name: '', price: '' }])
+  const [addWindow, setAddWindow] = useState(null)
   const [addDuration, setAddDuration] = useState(30)
+  const [editingWindow, setEditingWindow] = useState(null)  // item id with window editor open
   const [saving, setSaving] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [editingDuration, setEditingDuration] = useState(null)
@@ -28,6 +86,7 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     item.type === 'text' ? '📝'
     : item.type === 'photo' ? '🖼️'
     : item.type === 'scoreboard' ? '🆚'
+    : item.type === 'menu' ? '🧾'
     : modeById[item.content?.mode]?.icon ?? '⬡'
   const itemLabel = (item) => {
     if (item.type === 'text') { const t = item.content?.text ?? ''; return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}"` }
@@ -35,6 +94,10 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     if (item.type === 'scoreboard') {
       const c = item.content ?? {}
       return `${c.home_name ?? 'HOME'} ${c.home_score ?? 0} — ${c.away_score ?? 0} ${c.away_name ?? 'AWAY'}`
+    }
+    if (item.type === 'menu') {
+      const c = item.content ?? {}
+      return `${c.title || 'Menu'} (${(c.entries || []).length} items)`
     }
     return modeById[item.content?.mode]?.label ?? item.content?.mode ?? 'Mode'
   }
@@ -74,17 +137,25 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           home_score: 0,
           away_score: 0,
         }
+      } else if (addType === 'menu') {
+        content = {
+          title: addMenuTitle.trim(),
+          entries: addMenuEntries.filter(e => e.name.trim() || e.price.trim()),
+        }
       } else {
         content = { mode: addMode }
       }
       await apiJson(`/api/playlist${qs}`, 'POST',
-                    { type: addType, content, duration: addDuration })
+                    { type: addType, content, duration: addDuration, window: addWindow })
       await load()
       setShowAdd(false)
       setAddText('')
       setAddPhoto(null)
       setAddHomeName('')
       setAddAwayName('')
+      setAddMenuTitle('')
+      setAddMenuEntries([{ name: '', price: '' }])
+      setAddWindow(null)
     } catch (err) {
       showToast(`Could not add item: ${err.message}`)
     } finally {
@@ -194,6 +265,16 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     window.addEventListener('pointerup', onUp)
   }
 
+  const saveWindow = async (item, window) => {
+    try {
+      await apiJson(`/api/playlist/${item.id}${qs}`, 'PUT',
+                    { type: item.type, content: item.content, duration: item.duration, window })
+    } catch (err) {
+      showToast(`Schedule update failed: ${err.message}`)
+    }
+    await load()
+  }
+
   const saveDuration = async (item, newDuration) => {
     const dur = Math.max(5, parseInt(newDuration, 10) || 30)
     try {
@@ -295,7 +376,22 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
                 ) : (
                   <span className="text-[11px] font-mono truncate block" style={{ color: 'var(--text-2)' }}>{itemLabel(item)}</span>
                 )}
+                {windowBadge(item.window) && (
+                  <span className="text-[9px] font-mono block mt-0.5" style={{ color: 'var(--accent)' }}>
+                    {windowBadge(item.window)}
+                  </span>
+                )}
               </div>
+
+              {/* Time window */}
+              <button
+                onClick={() => setEditingWindow(editingWindow === item.id ? null : item.id)}
+                className="w-5 h-5 flex items-center justify-center text-xs flex-shrink-0 transition-colors"
+                style={{ color: item.window?.enabled ? 'var(--accent)' : 'var(--text-3)' }}
+                title="Time window (dayparting)"
+              >
+                ⏱
+              </button>
 
               {/* Duration */}
               {editingDuration === item.id ? (
@@ -341,6 +437,28 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
         </div>
       )}
 
+      {/* Per-item window editor (below the list to avoid drag interference) */}
+      {editingWindow !== null && (() => {
+        const item = items.find(i => i.id === editingWindow)
+        if (!item) return null
+        return (
+          <div className="rounded-xl p-3 space-y-2"
+            style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}>
+            <p className="section-label" style={{ color: 'var(--accent)' }}>
+              Schedule — {itemLabel(item)}
+            </p>
+            <WindowEditor
+              value={item.window?.enabled != null && Object.keys(item.window).length
+                ? { ...DEFAULT_WINDOW, ...item.window } : null}
+              onChange={w => saveWindow(item, w)}
+            />
+            <button onClick={() => setEditingWindow(null)} className="fb-btn-ghost w-full py-1.5 text-[11px]">
+              Done
+            </button>
+          </div>
+        )
+      })()}
+
       {items.length === 0 && !showAdd && (
         <div className="text-center py-8 text-[11px] font-mono rounded-xl"
           style={{ color: 'var(--text-3)', border: '1px dashed var(--border)' }}>
@@ -356,13 +474,14 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
           {/* Type tabs */}
           <div className="flex gap-1">
-            {['mode', 'text', 'photo', 'scoreboard'].map(t => (
+            {['mode', 'text', 'photo', 'scoreboard', 'menu'].map(t => (
               <button key={t} onClick={() => setAddType(t)}
                 className="flex-1 py-1.5 rounded-lg text-xs font-mono font-semibold tracking-wider transition-colors uppercase"
                 style={addType === t
                   ? { background: 'var(--accent)', color: '#fff' }
                   : { background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
-                {t === 'mode' ? 'Mode' : t === 'text' ? 'Text' : t === 'photo' ? 'Photo' : 'Score'}
+                {t === 'mode' ? 'Mode' : t === 'text' ? 'Text' : t === 'photo' ? 'Photo'
+                  : t === 'scoreboard' ? 'Score' : 'Menu'}
               </button>
             ))}
           </div>
@@ -407,6 +526,34 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
             </div>
           )}
 
+          {addType === 'menu' && (
+            <div className="space-y-2">
+              <input type="text" value={addMenuTitle} onChange={e => setAddMenuTitle(e.target.value)}
+                placeholder="Menu title (e.g. HAPPY HOUR) — optional" className="fb-input w-full" />
+              {addMenuEntries.map((entry, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input type="text" value={entry.name}
+                    onChange={e => setAddMenuEntries(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                    placeholder="Item name" className="fb-input flex-1" />
+                  <input type="text" value={entry.price}
+                    onChange={e => setAddMenuEntries(prev => prev.map((x, j) => j === i ? { ...x, price: e.target.value } : x))}
+                    placeholder="6.50" className="fb-input" style={{ width: 72 }} />
+                  <button type="button"
+                    onClick={() => setAddMenuEntries(prev => prev.length > 1 ? prev.filter((_, j) => j !== i) : prev)}
+                    className="text-sm px-1" style={{ color: 'var(--text-3)' }}>×</button>
+                </div>
+              ))}
+              <button type="button"
+                onClick={() => setAddMenuEntries(prev => [...prev, { name: '', price: '' }])}
+                className="fb-btn-ghost text-[10px] px-3 py-1">
+                + Row
+              </button>
+              <p className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+                Renders as NAME····PRICE with dot leaders. Long menus paginate each rotation.
+              </p>
+            </div>
+          )}
+
           {addType === 'photo' && (
             <div onClick={() => photoRef.current?.click()}
               className="rounded-xl p-4 text-center cursor-pointer transition-all"
@@ -436,10 +583,14 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
             <span className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>seconds</span>
           </div>
 
+          {/* Time window (dayparting) */}
+          <WindowEditor value={addWindow} onChange={setAddWindow} />
+
           <div className="flex gap-2 pt-1">
             <button onClick={addItem}
               disabled={saving || (addType === 'text' && !addText.trim()) || (addType === 'photo' && !addPhoto)
-                || (addType === 'scoreboard' && (!addHomeName.trim() || !addAwayName.trim()))}
+                || (addType === 'scoreboard' && (!addHomeName.trim() || !addAwayName.trim()))
+                || (addType === 'menu' && !addMenuEntries.some(e => e.name.trim()))}
               className="fb-btn-primary flex-1">
               {saving ? 'Adding…' : 'Add to Playlist'}
             </button>
