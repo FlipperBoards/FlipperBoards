@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import SplitFlapDisplay from './SplitFlapDisplay'
+import CanvasBoard from './CanvasBoard'
 import { useDisplayState } from '../hooks/useDisplayState'
 import { unlockAudio } from '../utils/audio'
 
@@ -33,6 +34,11 @@ export default function DisplayView() {
   const [searchParams] = useSearchParams()
   const screenId = searchParams.get('screen') || 'main'
   const kiosk = searchParams.get('kiosk') === '1'
+  // Canvas renderer is the default — smooth on weak hardware (Pi 3).
+  // ?renderer=dom falls back to the CSS tile renderer; ?scale=0.75 renders
+  // the canvas at reduced resolution for even weaker boards.
+  const useDomRenderer = searchParams.get('renderer') === 'dom'
+  const renderScale = parseFloat(searchParams.get('scale')) || 1
 
   const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce, textColors } = useDisplayState(screenId)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -134,24 +140,43 @@ export default function DisplayView() {
         </div>
       )}
 
-      <SplitFlapDisplay
-        matrix={matrix}
-        colorMatrix={colorMatrix}
-        photoUrl={photoUrl}
-        rows={rows}
-        cols={cols}
-        tileColor={tileColor}
-        tileBgColor={tileBgColor}
-        bgColor={bgColor}
-        soundEnabled={soundEnabled && audioUnlocked}
-        flipDuration={flipDuration}
-        dividerWidth={dividerWidth}
-        dividerColor={dividerColor}
-        physicalMode={physicalMode}
-        sweepNonce={sweepNonce}
-        textColors={textColors}
-        fillViewport
-      />
+      {useDomRenderer ? (
+        <SplitFlapDisplay
+          matrix={matrix}
+          colorMatrix={colorMatrix}
+          photoUrl={photoUrl}
+          rows={rows}
+          cols={cols}
+          tileColor={tileColor}
+          tileBgColor={tileBgColor}
+          bgColor={bgColor}
+          soundEnabled={soundEnabled && audioUnlocked}
+          flipDuration={flipDuration}
+          dividerWidth={dividerWidth}
+          dividerColor={dividerColor}
+          physicalMode={physicalMode}
+          sweepNonce={sweepNonce}
+          textColors={textColors}
+          fillViewport
+        />
+      ) : (
+        <CanvasBoard
+          matrix={matrix}
+          colorMatrix={colorMatrix}
+          photoUrl={photoUrl}
+          rows={rows}
+          cols={cols}
+          tileColor={tileColor}
+          tileBgColor={tileBgColor}
+          soundEnabled={soundEnabled && audioUnlocked}
+          flipDuration={flipDuration}
+          dividerWidth={dividerWidth}
+          dividerColor={dividerColor}
+          sweepNonce={sweepNonce}
+          textColors={textColors}
+          renderScale={renderScale}
+        />
+      )}
 
       {!audioUnlocked && !kiosk && (
         <div className="fixed bottom-6 left-0 right-0 text-center text-xs font-mono opacity-20"

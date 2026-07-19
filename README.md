@@ -6,7 +6,7 @@ A Vestaboard-style split-flap display application. Run it on a Raspberry Pi conn
 
 ## Features
 
-- **Authentic split-flap animation** — CSS 3D fold/rise keyframes, Web Audio synthesized flip sounds, per-column stagger timing, full-board sweep transitions
+- **Authentic split-flap animation** — canvas sprite engine flips every tile through its character ring exactly like the real mechanism, with gravity easing, per-tile timing jitter, Web Audio synthesized clatter, and full-board sweep transitions; smooth even on a Raspberry Pi 3
 - **Vestaboard character set** — codes 0–77: A–Z, digits, punctuation, hearts/stars/arrows/shapes (`♥ ★ → ■ ○ °`…), and 7 color tiles
 - **Multiple independent screens** — each screen has its own URL, mode rotation, playlist, and WebSocket group; cast any screen to any TV
 - **Ten auto-rotation modes** — Clock, Weather, News, Quotes, Calendar, Sports, Countdown, Stocks, Data Feed, Text Messages
@@ -138,6 +138,20 @@ Once running (either option), open these URLs — replace `<ip>` with your Pi's 
 | `http://<ip>:8000/display?screen=lobby` | Display for a named screen |
 | `http://<ip>:8000/?screen=lobby` | Remote control for a named screen |
 | `http://<ip>:8000/display?kiosk=1` | Kiosk mode — no UI chrome |
+
+**Display tuning parameters** (combine with `&`):
+
+- `scale=0.75` — render the board at reduced resolution (upscaled to fit). Try
+  `0.75` or `0.5` on very weak hardware.
+- `renderer=dom` — fall back to the original CSS tile renderer.
+- `sound=0` — disable flip sounds for this display.
+
+The display uses a canvas sprite engine: characters flip through the ring
+just like a real split-flap mechanism (a scoreboard digit going 2→3 is one
+flap; a full message change is a satisfying cascade), and rendering cost is a
+few sprite blits per moving tile — a Raspberry Pi 3 drives a 6×22 board
+smoothly. Fonts are bundled, so displays render identically with no internet
+access.
 
 ---
 

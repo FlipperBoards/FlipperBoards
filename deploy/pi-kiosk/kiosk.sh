@@ -31,6 +31,9 @@ done
 # Bookworm ships the binary as "chromium"; older images as "chromium-browser"
 BROWSER=$(command -v chromium-browser || command -v chromium)
 
+# GPU flags: Chromium blocklists the Pi's VideoCore GPU by default and falls
+# back to software rendering — forcing GPU rasterization makes the split-flap
+# canvas dramatically smoother on Pi 3 hardware.
 exec "$BROWSER" \
     --kiosk \
     --incognito \
@@ -40,4 +43,8 @@ exec "$BROWSER" \
     --disable-features=TranslateUI \
     --autoplay-policy=no-user-gesture-required \
     --check-for-update-interval=31536000 \
+    --ignore-gpu-blocklist \
+    --enable-gpu-rasterization \
+    --enable-zero-copy \
+    --disable-smooth-scrolling \
     "$URL"
