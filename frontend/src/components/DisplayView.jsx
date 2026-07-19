@@ -95,7 +95,7 @@ export default function DisplayView() {
     text_push: 'MESSAGE', matrix_push: 'CUSTOM', blank: 'BLANK',
     image_push: 'IMAGE', photo_push: 'PHOTO', photo_playlist: 'PLAYLIST',
     scoreboard: 'SCOREBOARD', sleep: 'SLEEPING', sports: 'SPORTS',
-    countdown: 'COUNTDOWN', menu: 'MENU',
+    countdown: 'COUNTDOWN', menu: 'MENU', stocks: 'STOCKS', data: 'DATA',
   }
 
   return (

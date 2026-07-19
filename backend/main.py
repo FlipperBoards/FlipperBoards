@@ -191,6 +191,19 @@ def _register_builtin_modes():
             count_up=config.get("count_up", "no") == "yes",
             timezone=s.get("timezone", "UTC"))
 
+    async def render_stocks(rows, cols, config, s):
+        from services.ticker import get_stocks_matrix
+        return await get_stocks_matrix(rows, cols,
+            symbols=config.get("symbols", ""),
+            screen_id=config.get("_screen_id", "main"))
+
+    async def render_data(rows, cols, config, s):
+        from services.ticker import get_data_matrix
+        return await get_data_matrix(rows, cols,
+            url=config.get("url", ""),
+            template=config.get("template", ""),
+            label=config.get("label", ""))
+
     _text_schema = {
         "message": {
             "type": "textarea",
@@ -247,6 +260,33 @@ def _register_builtin_modes():
             "help": "Optional. Stay on one team's game (scores update live) instead of rotating through all games.",
         },
     }
+    _stocks_schema = {
+        "symbols": {
+            "type": "text",
+            "label": "Symbols",
+            "placeholder": "AAPL, MSFT, BTC-USD",
+            "help": "Comma-separated Yahoo Finance symbols. Crypto works too (BTC-USD, ETH-USD).",
+        },
+    }
+    _data_schema = {
+        "url": {
+            "type": "text",
+            "label": "JSON URL",
+            "placeholder": "https://api.example.com/stats",
+            "help": "Any JSON endpoint — polled every 2 minutes by the server.",
+        },
+        "template": {
+            "type": "text",
+            "label": "Template",
+            "placeholder": "SUBS {data.followers}",
+            "help": "Placeholders use {dot.path.0.notation} into the JSON response.",
+        },
+        "label": {
+            "type": "text",
+            "label": "Label",
+            "placeholder": "Optional prefix",
+        },
+    }
     builtin = [
         ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
         ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
@@ -255,6 +295,8 @@ def _register_builtin_modes():
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
         ModeDefinition("sports",   "Sports",        "🏆", "Live game scores",        config_schema=_sports_schema, render=render_sports),
         ModeDefinition("countdown", "Countdown",     "⏳", "Count down to a date",    config_schema=_countdown_schema, render=render_countdown),
+        ModeDefinition("stocks",   "Stocks",        "📈", "Stock & crypto prices",   config_schema=_stocks_schema, render=render_stocks),
+        ModeDefinition("data",     "Data Feed",     "🔌", "Poll any JSON URL",       config_schema=_data_schema, render=render_data),
         ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
     ]
     for m in builtin:
