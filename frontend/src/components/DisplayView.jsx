@@ -34,7 +34,7 @@ export default function DisplayView() {
   const screenId = searchParams.get('screen') || 'main'
   const kiosk = searchParams.get('kiosk') === '1'
 
-  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce } = useDisplayState(screenId)
+  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce, textColors } = useDisplayState(screenId)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [showControls, setShowControls] = useState(true)
@@ -95,6 +95,7 @@ export default function DisplayView() {
     text_push: 'MESSAGE', matrix_push: 'CUSTOM', blank: 'BLANK',
     image_push: 'IMAGE', photo_push: 'PHOTO', photo_playlist: 'PLAYLIST',
     scoreboard: 'SCOREBOARD', sleep: 'SLEEPING', sports: 'SPORTS',
+    countdown: 'COUNTDOWN', menu: 'MENU', stocks: 'STOCKS', data: 'DATA',
   }
 
   return (
@@ -148,6 +149,7 @@ export default function DisplayView() {
         dividerColor={dividerColor}
         physicalMode={physicalMode}
         sweepNonce={sweepNonce}
+        textColors={textColors}
         fillViewport
       />
 

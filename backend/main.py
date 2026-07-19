@@ -27,7 +27,7 @@ import database
 import mode_registry
 import plugins as plugin_registry
 from websocket_manager import manager
-from charmap import blank_matrix, text_to_matrix
+from charmap import blank_matrix, text_to_matrix, text_to_matrix_colored
 from config import settings
 
 
@@ -110,6 +110,7 @@ class ScreenState:
         self.cols = cols
         self.matrix: list[list[int]] = blank_matrix(rows, cols)
         self.color_matrix: list[list[str]] | None = None
+        self.text_colors: list | None = None  # per-tile text color overrides (markup)
         self.photo_url: str | None = None
         # Universal playlist — drives rotation when non-empty
         self.playlist_items: list[dict] = []
@@ -181,6 +182,28 @@ def _register_builtin_modes():
             team=config.get("team", ""),
             screen_id=config.get("_screen_id", "main"))
 
+    async def render_countdown(rows, cols, config, s):
+        from services.countdown import get_countdown_matrix
+        return get_countdown_matrix(rows, cols,
+            target=config.get("target", ""),
+            label=config.get("label", ""),
+            done_text=config.get("done_text", ""),
+            count_up=config.get("count_up", "no") == "yes",
+            timezone=s.get("timezone", "UTC"))
+
+    async def render_stocks(rows, cols, config, s):
+        from services.ticker import get_stocks_matrix
+        return await get_stocks_matrix(rows, cols,
+            symbols=config.get("symbols", ""),
+            screen_id=config.get("_screen_id", "main"))
+
+    async def render_data(rows, cols, config, s):
+        from services.ticker import get_data_matrix
+        return await get_data_matrix(rows, cols,
+            url=config.get("url", ""),
+            template=config.get("template", ""),
+            label=config.get("label", ""))
+
     _text_schema = {
         "message": {
             "type": "textarea",
@@ -197,6 +220,31 @@ def _register_builtin_modes():
             "help": "Optional. Overrides built-in quotes when filled in.",
         }
     }
+    _countdown_schema = {
+        "target": {
+            "type": "text",
+            "label": "Target Date & Time",
+            "placeholder": "2027-01-01 00:00",
+            "help": "YYYY-MM-DD HH:MM in your configured timezone.",
+        },
+        "label": {
+            "type": "text",
+            "label": "Label",
+            "placeholder": "NEW YEARS",
+        },
+        "done_text": {
+            "type": "text",
+            "label": "When Finished",
+            "placeholder": "IT'S TIME!",
+        },
+        "count_up": {
+            "type": "select",
+            "label": "Direction",
+            "options": [{"value": "no", "label": "Count down to the date"},
+                        {"value": "yes", "label": "Count up since the date"}],
+            "default": "no",
+        },
+    }
     from services.sports import LEAGUES
     _sports_schema = {
         "league": {
@@ -212,6 +260,33 @@ def _register_builtin_modes():
             "help": "Optional. Stay on one team's game (scores update live) instead of rotating through all games.",
         },
     }
+    _stocks_schema = {
+        "symbols": {
+            "type": "text",
+            "label": "Symbols",
+            "placeholder": "AAPL, MSFT, BTC-USD",
+            "help": "Comma-separated Yahoo Finance symbols. Crypto works too (BTC-USD, ETH-USD).",
+        },
+    }
+    _data_schema = {
+        "url": {
+            "type": "text",
+            "label": "JSON URL",
+            "placeholder": "https://api.example.com/stats",
+            "help": "Any JSON endpoint — polled every 2 minutes by the server.",
+        },
+        "template": {
+            "type": "text",
+            "label": "Template",
+            "placeholder": "SUBS {data.followers}",
+            "help": "Placeholders use {dot.path.0.notation} into the JSON response.",
+        },
+        "label": {
+            "type": "text",
+            "label": "Label",
+            "placeholder": "Optional prefix",
+        },
+    }
     builtin = [
         ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
         ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
@@ -219,6 +294,9 @@ def _register_builtin_modes():
         ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    config_schema=_quotes_schema, render=render_quotes),
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
         ModeDefinition("sports",   "Sports",        "🏆", "Live game scores",        config_schema=_sports_schema, render=render_sports),
+        ModeDefinition("countdown", "Countdown",     "⏳", "Count down to a date",    config_schema=_countdown_schema, render=render_countdown),
+        ModeDefinition("stocks",   "Stocks",        "📈", "Stock & crypto prices",   config_schema=_stocks_schema, render=render_stocks),
+        ModeDefinition("data",     "Data Feed",     "🔌", "Poll any JSON URL",       config_schema=_data_schema, render=render_data),
         ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
     ]
     for m in builtin:
@@ -258,6 +336,7 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
     content = item.get("content", {})
 
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
 
     if item_type == "mode":
@@ -272,7 +351,8 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
 
     elif item_type == "text":
         state.mode = "text_push"
-        state.matrix = text_to_matrix(content.get("text", ""), state.rows, state.cols)
+        state.matrix, state.text_colors = text_to_matrix_colored(
+            content.get("text", ""), state.rows, state.cols)
 
     elif item_type == "photo":
         state.mode = "photo_push"
@@ -296,6 +376,16 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
             content.get("home_score", 0), content.get("away_score", 0),
         )
 
+    elif item_type == "menu":
+        from services.menu import get_menu_matrix
+        state.mode = "menu"
+        state.matrix = get_menu_matrix(
+            state.rows, state.cols,
+            title=content.get("title", ""),
+            entries=content.get("entries", []),
+            screen_id=state.screen_id,
+        )
+
     await _broadcast_screen(state, transition=transition)
 
 
@@ -310,10 +400,29 @@ async def advance_screen_mode(screen_id: str):
     # Universal playlist takes priority when items exist
     if state.playlist_items:
         old_pos = state.playlist_pos
-        state.playlist_pos = (state.playlist_pos + 1) % len(state.playlist_items)
-        # Full-board sweep only when the displayed item actually changes
-        await _render_playlist_item(
-            state, transition="sweep" if state.playlist_pos != old_pos else None)
+        n = len(state.playlist_items)
+        now = await _now_local()
+        for step in range(1, n + 1):
+            pos = (old_pos + step) % n
+            if _item_eligible(state.playlist_items[pos], now):
+                state.playlist_pos = pos
+                # Full-board sweep only when the displayed item actually changes
+                await _render_playlist_item(
+                    state, transition="sweep" if pos != old_pos else None)
+                return
+        # Every item is outside its time window — fall back to the clock
+        db_settings = await _effective_settings()
+        from services.clock import get_clock_matrix
+        state.mode = "clock"
+        state.color_matrix = None
+        state.photo_url = None
+        state.matrix = get_clock_matrix(
+            state.rows, state.cols,
+            fmt=db_settings.get("clock_format", "12h"),
+            show_date=db_settings.get("show_date", "true") == "true",
+            timezone=db_settings.get("timezone", "UTC"),
+        )
+        await _broadcast_screen(state)
         return
 
     # Fallback: rotate through enabled modes
@@ -328,6 +437,7 @@ async def advance_screen_mode(screen_id: str):
     mode_name = mode_entry["mode"]
     state.mode = mode_name
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
 
     state.matrix = await _render_mode(
@@ -363,6 +473,10 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
             "mode": state.mode,
             "screen_id": state.screen_id,
         }
+        # Per-tile text colors only apply to text content — gating by mode
+        # means stale color maps can never leak into other modes
+        if state.text_colors and state.mode in ("text_push", "text"):
+            msg["text_colors"] = state.text_colors
         if transition:
             msg["transition"] = transition
         await manager.broadcast(state.screen_id, msg)
@@ -390,6 +504,8 @@ async def _persist_screen_state(state: ScreenState) -> None:
             "photo_url": state.photo_url,
             "playlist_pos": state.playlist_pos,
         }
+        if state.text_colors and state.mode in ("text_push", "text"):
+            snapshot["text_colors"] = state.text_colors
     blob = json.dumps(snapshot)
     if _last_persisted.get(state.screen_id) == blob:
         return
@@ -413,24 +529,48 @@ def _parse_hhmm(value: str) -> int | None:
     return None
 
 
-def _in_quiet_window(now, schedule: dict) -> bool:
-    """True when `now` (an aware local datetime) falls inside the screen's
-    quiet window. `days` are the weekdays (0=Mon) the OFF time applies to;
-    overnight windows (off 22:00 → on 06:00) spill into the next morning."""
-    if not schedule.get("enabled"):
-        return False
-    off = _parse_hhmm(schedule.get("off_time", ""))
-    on = _parse_hhmm(schedule.get("on_time", ""))
-    days = schedule.get("days") or list(range(7))
-    if off is None or on is None or off == on:
+def _time_in_window(now, start_hhmm: str, end_hhmm: str, days: list[int]) -> bool:
+    """True when `now` (aware local datetime) is inside [start, end). `days`
+    are weekdays (0=Mon) the START applies to; overnight windows (22:00 →
+    06:00) spill into the next morning."""
+    start = _parse_hhmm(start_hhmm)
+    end = _parse_hhmm(end_hhmm)
+    if start is None or end is None or start == end:
         return False
     minutes = now.hour * 60 + now.minute
-    if off < on:  # same-day window
-        return now.weekday() in days and off <= minutes < on
-    # overnight: after off_time today, or before on_time following an off-day
-    if now.weekday() in days and minutes >= off:
+    if start < end:  # same-day window
+        return now.weekday() in days and start <= minutes < end
+    # overnight: after start today, or before end following a start-day
+    if now.weekday() in days and minutes >= start:
         return True
-    return (now.weekday() - 1) % 7 in days and minutes < on
+    return (now.weekday() - 1) % 7 in days and minutes < end
+
+
+def _in_quiet_window(now, schedule: dict) -> bool:
+    if not schedule.get("enabled"):
+        return False
+    return _time_in_window(now, schedule.get("off_time", ""), schedule.get("on_time", ""),
+                           schedule.get("days") or list(range(7)))
+
+
+async def _now_local():
+    import pytz
+    db_settings = await database.get_settings()
+    try:
+        tz = pytz.timezone(db_settings.get("timezone", "UTC"))
+    except Exception:
+        tz = pytz.utc
+    return datetime.now(tz)
+
+
+def _item_eligible(item: dict, now) -> bool:
+    """A playlist item without a window (or with it disabled) always plays;
+    a windowed item only plays inside its time window."""
+    w = item.get("window") or {}
+    if not w.get("enabled"):
+        return True
+    return _time_in_window(now, w.get("start_time", ""), w.get("end_time", ""),
+                           w.get("days") or list(range(7)))
 
 
 async def _sleep_screen(state: ScreenState) -> None:
@@ -440,6 +580,7 @@ async def _sleep_screen(state: ScreenState) -> None:
     state.mode = "sleep"
     state.matrix = blank_matrix(state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     await _broadcast_screen(state)
 
@@ -530,7 +671,7 @@ async def _rotation_loop(screen_id: str):
 
 
 async def _clock_tick_loop():
-    """Global 1-second tick — updates all screens currently in clock mode."""
+    """Global 1-second tick — live-updates clock and countdown screens."""
     while True:
         try:
             await asyncio.sleep(1)
@@ -544,6 +685,16 @@ async def _clock_tick_loop():
                         show_date=db_settings.get("show_date", "true") == "true",
                         timezone=db_settings.get("timezone", "UTC"),
                     )
+                    state.color_matrix = None
+                    state.photo_url = None
+                    await _broadcast_screen(state)
+                elif state.mode == "countdown":
+                    # Re-render each second so the seconds digits flip live
+                    mode_entries = await database.get_modes(sid)
+                    entry = next((m for m in mode_entries if m["mode"] == "countdown"), None)
+                    state.matrix = await _render_mode(
+                        "countdown", state.rows, state.cols, db_settings,
+                        screen_id=sid, mode_config=entry.get("config", {}) if entry else {})
                     state.color_matrix = None
                     state.photo_url = None
                     await _broadcast_screen(state)
@@ -622,6 +773,7 @@ async def lifespan(app: FastAPI):
             state.mode = saved["mode"]
             state.photo_url = saved.get("photo_url")
             state.color_matrix = saved.get("color_matrix")
+            state.text_colors = saved.get("text_colors")
             if saved.get("matrix"):
                 state.matrix = _normalize_matrix(saved["matrix"], state.rows, state.cols)
             _restored_push_screens.add(sid)
@@ -873,15 +1025,39 @@ class TextMessage(BaseModel):
     text: str
     duration: int = 30
 
+class PlaylistWindow(BaseModel):
+    """Optional dayparting: the item only plays inside this time window."""
+    enabled: bool = False
+    start_time: str = "11:00"
+    end_time: str = "22:00"
+    days: list[int] = Field(default_factory=lambda: list(range(7)))  # 0=Mon
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _valid_time(cls, v):
+        if _parse_hhmm(v) is None:
+            raise ValueError("must be HH:MM (24h)")
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def _valid_days(cls, v):
+        if any(d < 0 or d > 6 for d in v):
+            raise ValueError("days must be 0-6 (Monday=0)")
+        return sorted(set(v))
+
+
 class PlaylistItemCreate(BaseModel):
-    type: str              # 'mode', 'text', 'photo', 'color', 'matrix', 'scoreboard'
+    type: str              # 'mode', 'text', 'photo', 'color', 'matrix', 'scoreboard', 'menu'
     content: dict          # varies by type
     duration: int = Field(default=30, ge=1, le=86400)
+    window: PlaylistWindow | None = None
 
 class PlaylistItemUpdate(BaseModel):
     type: str
     content: dict
     duration: int = Field(ge=1, le=86400)
+    window: PlaylistWindow | None = None
 
 class PlaylistReorder(BaseModel):
     ids: list[int]
@@ -1130,13 +1306,15 @@ async def get_state(screen: str = Query(default="main")):
         "photo_url": state.photo_url,
         "playlist_active": bool(state.playlist_items),
         "playlist_pos": state.playlist_pos,
+        "text_colors": state.text_colors if state.mode in ("text_push", "text") else None,
     }
 
 
 @app.post("/api/display/text")
 async def push_text(content: DisplayContent, screen: str = Query(default="main")):
     state = get_screen_state(screen)
-    state.matrix = text_to_matrix(content.text, state.rows, state.cols)
+    state.matrix, state.text_colors = text_to_matrix_colored(
+        content.text, state.rows, state.cols)
     state.color_matrix = None
     state.photo_url = None
     state.mode = "text_push"
@@ -1150,6 +1328,7 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state = get_screen_state(screen)
     state.matrix = _normalize_matrix(content.matrix, state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.mode = "matrix_push"
     _schedule_revert(state, screen, content.duration)
@@ -1219,6 +1398,7 @@ async def blank_display(screen: str = Query(default="main")):
     state = get_screen_state(screen)
     state.matrix = blank_matrix(state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.mode = "blank"
     # Blank behaves like a push with no duration: rotation pauses so the
@@ -1250,6 +1430,7 @@ async def push_mode(content: ModeContent, screen: str = Query(default="main")):
     mode_config = mode_entry.get("config", {}) if mode_entry else {}
     state.mode = mode
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings,
                                       screen_id=screen, mode_config=mode_config)
@@ -1326,7 +1507,9 @@ async def get_playlist(screen: str = Query(default="main")):
 @app.post("/api/playlist", status_code=201)
 async def add_playlist_item(body: PlaylistItemCreate, screen: str = Query(default="main")):
     state = get_screen_state(screen)
-    item_id = await database.add_playlist_item(screen, body.type, body.content, body.duration)
+    item_id = await database.add_playlist_item(
+        screen, body.type, body.content, body.duration,
+        window=body.window.model_dump() if body.window else None)
     state.playlist_items = await database.get_playlist_items(screen)
     return {"status": "created", "id": item_id}
 
@@ -1345,7 +1528,9 @@ async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: s
     state = get_screen_state(screen)
     state.playlist_items = await database.get_playlist_items(screen)
     _screen_playlist_item(state, item_id)
-    await database.update_playlist_item(item_id, body.type, body.content, body.duration)
+    await database.update_playlist_item(
+        item_id, body.type, body.content, body.duration,
+        window=body.window.model_dump() if body.window else None)
     state.playlist_items = await database.get_playlist_items(screen)
     # Live-update: if the edited item is on screen now, re-render in place.
     # No transition — only tiles whose character changed will flip.
@@ -1458,6 +1643,7 @@ async def push_design(design_id: int, screen: str = Query(default="main"),
     state = get_screen_state(screen)
     state.matrix = _normalize_matrix(design["matrix"], state.rows, state.cols)
     state.color_matrix = None
+    state.text_colors = None
     state.photo_url = None
     state.mode = "matrix_push"
     _schedule_revert(state, screen, duration)
@@ -1605,14 +1791,17 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
                 "screen_id": screen,
             })
         else:
-            initial_msgs.insert(0, {
+            initial = {
                 "type": "display_update",
                 "matrix": state.matrix,
                 "rows": state.rows,
                 "cols": state.cols,
                 "mode": state.mode,
                 "screen_id": screen,
-            })
+            }
+            if state.text_colors and state.mode in ("text_push", "text"):
+                initial["text_colors"] = state.text_colors
+            initial_msgs.insert(0, initial)
 
     import json as _json
     for msg in initial_msgs:

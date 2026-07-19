@@ -78,3 +78,100 @@ export function textToMatrix(text, rows, cols) {
   while (matrix.length < rows) matrix.push(Array(cols).fill(0))
   return matrix
 }
+
+// ── Colored text markup — mirrors backend charmap.parse_colored_text ─────────
+// {red}HAPPY HOUR{/} colors the enclosed characters.
+
+export const MARKUP_COLORS = {
+  red: '#e63946', orange: '#f4a261', yellow: '#e9c46a',
+  green: '#2a9d8f', blue: '#457b9d', violet: '#7b2d8b',
+  white: '#f1faee',
+}
+
+const MARKUP_RE = /\{(red|orange|yellow|green|blue|violet|white|\/)\}/gi
+
+/** Strip {color}…{/} markup. Returns [cleanText, perCharHexOrNull[]]. */
+export function parseColoredText(text) {
+  const cleanParts = []
+  const colors = []
+  let current = null
+  let pos = 0
+  MARKUP_RE.lastIndex = 0
+  let m
+  while ((m = MARKUP_RE.exec(text)) !== null) {
+    const seg = text.slice(pos, m.index)
+    cleanParts.push(seg)
+    for (let i = 0; i < seg.length; i++) colors.push(current)
+    const tag = m[1].toLowerCase()
+    current = tag === '/' ? null : MARKUP_COLORS[tag]
+    pos = m.index + m[0].length
+  }
+  const seg = text.slice(pos)
+  cleanParts.push(seg)
+  for (let i = 0; i < seg.length; i++) colors.push(current)
+  return [cleanParts.join(''), colors]
+}
+
+/** Like textToMatrix but honoring color markup. Returns [matrix, colorMap]
+ * — colorMap is rows×cols of hex-or-null, or null when no markup. */
+export function textToMatrixColored(text, rows, cols) {
+  const [clean, charColors] = parseColoredText(text)
+
+  // Words as (char, color) pair lists, mirroring textToMatrix's wrapping
+  const words = []
+  let currentWord = []
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i]
+    if (/\s/.test(ch)) {
+      if (currentWord.length) { words.push(currentWord); currentWord = [] }
+    } else {
+      currentWord.push([ch.toUpperCase(), charColors[i]])
+    }
+  }
+  if (currentWord.length) words.push(currentWord)
+
+  const lines = []
+  let line = []
+  for (let word of words) {
+    if (word.length > cols) {
+      if (line.length) { lines.push(line); line = [] }
+      while (word.length) { lines.push(word.slice(0, cols)); word = word.slice(cols) }
+    } else if (line.length + word.length + (line.length ? 1 : 0) <= cols) {
+      if (line.length) line.push([' ', null])
+      line.push(...word)
+    } else {
+      lines.push(line)
+      line = word
+    }
+  }
+  if (line.length) lines.push(line)
+
+  const matrixRows = []
+  const colorRows = []
+  for (const ln of lines.slice(0, rows)) {
+    const pad = Math.max(0, Math.floor((cols - ln.length) / 2))
+    const row = Array(cols).fill(0)
+    const crow = Array(cols).fill(null)
+    ln.forEach(([ch, color], i) => {
+      if (pad + i < cols) {
+        row[pad + i] = charToCode(ch)
+        crow[pad + i] = color
+      }
+    })
+    matrixRows.push(row)
+    colorRows.push(crow)
+  }
+
+  const topPad = Math.max(0, Math.floor((rows - matrixRows.length) / 2))
+  const matrix = Array.from({ length: topPad }, () => Array(cols).fill(0))
+  const cmap = Array.from({ length: topPad }, () => Array(cols).fill(null))
+  matrix.push(...matrixRows)
+  cmap.push(...colorRows)
+  while (matrix.length < rows) {
+    matrix.push(Array(cols).fill(0))
+    cmap.push(Array(cols).fill(null))
+  }
+
+  const hasColor = cmap.some(r => r.some(c => c !== null))
+  return [matrix, hasColor ? cmap : null]
+}

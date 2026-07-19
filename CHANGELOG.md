@@ -2,6 +2,28 @@
 
 All notable changes to FlipperBoards are documented here.
 
+## Unreleased
+
+### Added
+- Playlist time windows (dayparting): every playlist item can carry a start
+  time, end time, and weekday selection — the lunch menu shows at lunch, the
+  dinner menu at dinner; overnight windows supported; all-items-out-of-window
+  falls back to the clock
+- Menu playlist items: title + name/price entries with dot leaders and
+  right-aligned prices; paginates when entries outnumber rows
+- Countdown mode: days / HH:MM:SS to a target date with label and custom
+  finish message, or count up since a date — seconds tick live with
+  digit-only flips
+- Colored text markup: `{red}HAPPY HOUR{/}` colors individual letters in
+  pushed text and playlist text items (7 Vestaboard palette colors); live in
+  the Text tab preview
+- Stocks mode: comma-separated Yahoo Finance symbols (stocks + crypto) with
+  price, % change, and green/red direction tiles — no API key; pages through
+  long symbol lists
+- Data Feed mode: poll any JSON URL and render a template with
+  `{dot.path.0.notation}` placeholders — follower counts, sensors, anything
+  with a JSON endpoint
+
 ## 0.1.0 — 2026-07-18
 
 First tagged release.

@@ -109,3 +109,103 @@ def text_to_matrix(text: str, rows: int, cols: int) -> list[list[int]]:
 
 def blank_matrix(rows: int, cols: int) -> list[list[int]]:
     return [[0] * cols for _ in range(rows)]
+
+
+# ── Colored text markup ───────────────────────────────────────────────────────
+# {red}HAPPY HOUR{/} — colors the enclosed characters. Something a physical
+# split-flap board can't do.
+
+import re as _re
+
+MARKUP_COLORS = {
+    "red": "#e63946", "orange": "#f4a261", "yellow": "#e9c46a",
+    "green": "#2a9d8f", "blue": "#457b9d", "violet": "#7b2d8b",
+    "white": "#f1faee",
+}
+
+_MARKUP_RE = _re.compile(r"\{(red|orange|yellow|green|blue|violet|white|/)\}", _re.IGNORECASE)
+
+
+def parse_colored_text(text: str) -> tuple[str, list]:
+    """Strip {color}…{/} markup. Returns (clean_text, per-char hex-or-None)."""
+    clean_parts: list[str] = []
+    colors: list = []
+    current = None
+    pos = 0
+    for m in _MARKUP_RE.finditer(text):
+        seg = text[pos:m.start()]
+        clean_parts.append(seg)
+        colors.extend([current] * len(seg))
+        tag = m.group(1).lower()
+        current = None if tag == "/" else MARKUP_COLORS[tag]
+        pos = m.end()
+    seg = text[pos:]
+    clean_parts.append(seg)
+    colors.extend([current] * len(seg))
+    return "".join(clean_parts), colors
+
+
+def text_to_matrix_colored(text: str, rows: int, cols: int):
+    """Like text_to_matrix but honoring color markup. Returns
+    (matrix, color_map) — color_map is rows×cols of hex-or-None, or None
+    when the text carries no markup."""
+    clean, char_colors = parse_colored_text(text)
+
+    # Words as (char, color) pair lists, mirroring text_to_matrix's wrapping
+    words: list[list] = []
+    current_word: list = []
+    for ch, color in zip(clean, char_colors, strict=True):
+        if ch.isspace():
+            if current_word:
+                words.append(current_word)
+                current_word = []
+        else:
+            current_word.append((ch.upper(), color))
+    if current_word:
+        words.append(current_word)
+
+    lines: list[list] = []
+    line: list = []
+    for word in words:
+        if len(word) > cols:
+            if line:
+                lines.append(line)
+                line = []
+            while word:
+                lines.append(word[:cols])
+                word = word[cols:]
+        elif len(line) + len(word) + (1 if line else 0) <= cols:
+            if line:
+                line.append((" ", None))
+            line.extend(word)
+        else:
+            lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    lines = lines[:rows]
+
+    matrix_rows, color_rows = [], []
+    for ln in lines:
+        pad = max(0, (cols - len(ln)) // 2)
+        row = [0] * cols
+        crow = [None] * cols
+        for i, (ch, color) in enumerate(ln):
+            if pad + i < cols:
+                row[pad + i] = char_to_code(ch)
+                crow[pad + i] = color
+        matrix_rows.append(row)
+        color_rows.append(crow)
+
+    top_pad = max(0, (rows - len(matrix_rows)) // 2)
+    matrix = [[0] * cols for _ in range(top_pad)]
+    cmap = [[None] * cols for _ in range(top_pad)]
+    matrix.extend(matrix_rows)
+    cmap.extend(color_rows)
+    while len(matrix) < rows:
+        matrix.append([0] * cols)
+        cmap.append([None] * cols)
+
+    if all(c is None for r in cmap for c in r):
+        cmap = None
+    return matrix, cmap

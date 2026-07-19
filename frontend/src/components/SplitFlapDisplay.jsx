@@ -24,6 +24,7 @@ export default function SplitFlapDisplay({
   physicalMode = false,
   fillViewport = false,    // when true: no padding/shadow/header, flush fill
   sweepNonce = 0,          // increments when the server requests a full-board sweep
+  textColors = null,       // rows×cols of hex-or-null — per-tile text color overrides
 }) {
   const prevMatrixRef = useRef([])
   // Idempotence cache: React may re-invoke the memo for the same commit
@@ -107,7 +108,7 @@ export default function SplitFlapDisplay({
               : colorMatrix
                 ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                     tileFill delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
-                : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                : <FlapTile key={`${r}-${c}`} code={code} tileColor={textColors?.[r]?.[c] || tileColor} tileBgColor={tileBgColor}
                     tileFill gridFontSize={gridFontSize} sweepNonce={sweepNonce}
                     delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
           )
@@ -159,7 +160,7 @@ export default function SplitFlapDisplay({
                 : colorMatrix
                   ? <ColorTile key={`${r}-${c}`} color={colorMatrix[r]?.[c] ?? '#1a1a1a'}
                       size={tileSize} delay={staggerMap[r]?.[c] ?? 0} physicalMode={physicalMode} />
-                  : <FlapTile key={`${r}-${c}`} code={code} tileColor={tileColor} tileBgColor={tileBgColor}
+                  : <FlapTile key={`${r}-${c}`} code={code} tileColor={textColors?.[r]?.[c] || tileColor} tileBgColor={tileBgColor}
                       size={tileSize} sweepNonce={sweepNonce}
                       delay={staggerMap[r]?.[c] ?? 0} soundEnabled={soundEnabled} flipDuration={flipDuration} extraShadow={tileShadow} />
             ))}

@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react'
 import DurationPicker from './DurationPicker'
 import { apiFetch, apiJson } from '../../utils/api'
 import { useToast } from '../Toast'
-import { textToMatrix, codeToChar } from '../../utils/charmap'
+import { textToMatrixColored, codeToChar } from '../../utils/charmap'
 
 function TextPreview({ text, rows = 6, cols = 22 }) {
-  const matrix = useMemo(() => textToMatrix(text, rows, cols), [text, rows, cols])
+  const [matrix, colorMap] = useMemo(() => textToMatrixColored(text, rows, cols), [text, rows, cols])
   return (
     <div
       className="rounded-lg overflow-hidden mx-3 mb-3"
@@ -20,7 +20,7 @@ function TextPreview({ text, rows = 6, cols = 22 }) {
           >
             {code !== 0 && (
               <span style={{
-                fontSize: '50%', lineHeight: 1, color: '#c8d0e0',
+                fontSize: '50%', lineHeight: 1, color: colorMap?.[r]?.[c] || '#c8d0e0',
                 fontFamily: '"Bebas Neue", "Share Tech Mono", monospace',
               }}>
                 {codeToChar(code)}
@@ -118,6 +118,11 @@ export default function TextInput({ screenId = 'main', onRefresh, rows = 6, cols
 
         {/* Live board preview — exactly how the text will wrap and center */}
         {text.trim() && <TextPreview text={text} rows={rows} cols={cols} />}
+
+        {/* Color markup hint */}
+        <p className="px-4 pb-2 text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+          Color text with {'{red}'}HAPPY HOUR{'{/}'} — red, orange, yellow, green, blue, violet, white
+        </p>
 
         {/* Send Now row */}
         <div

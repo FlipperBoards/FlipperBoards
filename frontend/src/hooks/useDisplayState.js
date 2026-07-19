@@ -13,6 +13,7 @@ export function useDisplayState(screenId = 'main') {
   const [screens, setScreens] = useState([])
   const [connected, setConnected] = useState(false)
   const [sweepNonce, setSweepNonce] = useState(0)
+  const [textColors, setTextColors] = useState(null)
 
   const handleMessage = useCallback((data) => {
     const forMe = !data.screen_id || data.screen_id === screenId
@@ -24,6 +25,7 @@ export function useDisplayState(screenId = 'main') {
           setRows(data.rows || 6)
           setCols(data.cols || 22)
           setMode(data.mode || 'clock')
+          setTextColors(data.text_colors || null)
           setColorMatrix(null)
           setPhotoUrl(null)
         }
@@ -62,5 +64,5 @@ export function useDisplayState(screenId = 'main') {
   // receipt — so indicators go red when the server dies or Wi-Fi drops.
   useWebSocket(handleMessage, screenId, setConnected)
 
-  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, sweepNonce }
+  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, sweepNonce, textColors }
 }

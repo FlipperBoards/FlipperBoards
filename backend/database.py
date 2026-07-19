@@ -119,7 +119,8 @@ async def _create_tables(db: aiosqlite.Connection):
             type        TEXT    NOT NULL,
             content     TEXT    NOT NULL DEFAULT '{}',
             duration    INTEGER NOT NULL DEFAULT 30,
-            sort_order  INTEGER NOT NULL DEFAULT 0
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            window      TEXT    NOT NULL DEFAULT '{}'
         )
     """)
 
@@ -452,33 +453,39 @@ async def get_playlist_items(
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, type, content, duration, sort_order FROM playlist_items "
+            "SELECT id, type, content, duration, sort_order, window FROM playlist_items "
             "WHERE screen_id=? AND org_id=? ORDER BY sort_order, id",
             (screen_id, org_id)
         ) as cur:
             rows = await cur.fetchall()
-    return [
-        {
+    result = []
+    for row in rows:
+        try:
+            window = json.loads(row["window"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            window = {}
+        result.append({
             "id": row["id"],
             "type": row["type"],
             "content": json.loads(row["content"]),
             "duration": row["duration"],
             "sort_order": row["sort_order"],
-        }
-        for row in rows
-    ]
+            "window": window,
+        })
+    return result
 
 
 async def add_playlist_item(
     screen_id: str, item_type: str, content: dict, duration: int,
-    org_id: int = DEFAULT_ORG_ID,
+    window: dict | None = None, org_id: int = DEFAULT_ORG_ID,
 ) -> int:
     async with _connect() as db:
         async with db.execute(
-            "INSERT INTO playlist_items (org_id, screen_id, type, content, duration, sort_order) "
-            "VALUES (?, ?, ?, ?, ?, "
+            "INSERT INTO playlist_items (org_id, screen_id, type, content, duration, window, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, "
             "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_items WHERE screen_id=? AND org_id=?))",
-            (org_id, screen_id, item_type, json.dumps(content), duration, screen_id, org_id)
+            (org_id, screen_id, item_type, json.dumps(content), duration,
+             json.dumps(window or {}), screen_id, org_id)
         ) as cur:
             row_id = cur.lastrowid
         await db.commit()
@@ -487,13 +494,19 @@ async def add_playlist_item(
 
 async def update_playlist_item(
     item_id: int, item_type: str, content: dict, duration: int,
-    org_id: int = DEFAULT_ORG_ID,
+    window: dict | None = None, org_id: int = DEFAULT_ORG_ID,
 ):
     async with _connect() as db:
-        await db.execute(
-            "UPDATE playlist_items SET type=?, content=?, duration=? WHERE id=? AND org_id=?",
-            (item_type, json.dumps(content), duration, item_id, org_id)
-        )
+        if window is None:
+            await db.execute(
+                "UPDATE playlist_items SET type=?, content=?, duration=? WHERE id=? AND org_id=?",
+                (item_type, json.dumps(content), duration, item_id, org_id)
+            )
+        else:
+            await db.execute(
+                "UPDATE playlist_items SET type=?, content=?, duration=?, window=? WHERE id=? AND org_id=?",
+                (item_type, json.dumps(content), duration, json.dumps(window), item_id, org_id)
+            )
         await db.commit()
 
 
