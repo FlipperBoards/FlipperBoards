@@ -242,9 +242,10 @@ green (clear), yellow (slow), red (heavy):
 
 Set the **Google Maps API key** in Settings (Routes API enabled on the key),
 then the **origin** and **destinations** (`Name | address`, one per line) in
-the mode's ⚙ config. Anywhere an address goes, a coordinate pair works too
-(`Home | 45.52, -122.68`) — coordinates skip geocoding entirely, which is
-handy for spots without a clean street address. Times refresh **every 5 minutes while displayed** —
+the mode's ⚙ config. Anywhere an address goes, coordinates work too — decimal
+(`Home | 45.52, -122.68`) or the DMS format Google Maps copies on right-click
+(`Home | 33°26'43.8"N 111°59'21.0"W`). Coordinates skip geocoding entirely,
+which is handy for spots without a clean street address. Times refresh **every 5 minutes while displayed** —
 fetches only happen when a screen is actually showing the mode, and one
 Route Matrix request covers all destinations. Google bills the Route Matrix
 per element (destinations × refreshes), so fewer destinations and fewer

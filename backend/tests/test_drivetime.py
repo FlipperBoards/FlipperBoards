@@ -60,12 +60,31 @@ def test_waypoint_coordinates():
     assert wp["waypoint"]["location"]["latLng"]["latitude"] == -33.86
 
 
+def test_waypoint_dms_coordinates():
+    # Exactly what Google Maps gives you on right-click → copy
+    wp = make_waypoint('33°26\'43.8"N 111°59\'21.0"W')
+    ll = wp["waypoint"]["location"]["latLng"]
+    assert ll["latitude"] == pytest.approx(33.4455, abs=1e-4)
+    assert ll["longitude"] == pytest.approx(-111.9892, abs=1e-4)
+
+    # Southern/eastern hemispheres, typographic quotes, comma separator
+    wp = make_waypoint("33°51’54.0”S, 151°12’36.0”E")
+    ll = wp["waypoint"]["location"]["latLng"]
+    assert ll["latitude"] == pytest.approx(-33.865, abs=1e-3)
+    assert ll["longitude"] == pytest.approx(151.21, abs=1e-3)
+
+    # Degrees-only DMS still parses
+    wp = make_waypoint("45°N 122°W")
+    assert wp["waypoint"]["location"]["latLng"]["latitude"] == 45.0
+
+
 def test_waypoint_address_passthrough():
     assert make_waypoint("123 Main St, Portland OR") == \
         {"waypoint": {"address": "123 Main St, Portland OR"}}
     # Out-of-range numbers are not coordinates — "1234, 5678 Elm St" is an address
     assert "address" in make_waypoint("91.0, 200.0")["waypoint"]
     assert "address" in make_waypoint("PDX Airport")["waypoint"]
+    assert "address" in make_waypoint('95°26\'43.8"N 111°59\'21.0"W')["waypoint"]
 
 
 # ── Matrix response parsing + traffic accents ─────────────────────────────────
