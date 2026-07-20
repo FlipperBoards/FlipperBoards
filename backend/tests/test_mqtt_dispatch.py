@@ -25,6 +25,24 @@ async def test_mode_command(client):
     assert s["mode"] == "clock"
 
 
+async def test_set_command_activates_by_name(client):
+    import uuid
+    sid = "mq" + uuid.uuid4().hex[:8]
+    await client.post("/api/screens", json={"id": sid, "name": "MQ"})
+    # A second set named "Night" with an item
+    night = (await client.post(f"/api/playlist/sets?screen={sid}",
+                               json={"name": "Night"})).json()["id"]
+    await client.post(f"/api/playlist?screen={sid}&set={night}",
+                      json={"type": "text", "content": {"text": "CLOSED"}, "duration": 30})
+
+    await main._mqtt_dispatch(sid, "set", None, "Night")   # activate by name
+    assert main._screens[sid].active_set_id == night
+
+    # Unknown set name is ignored (no crash, active set unchanged)
+    await main._mqtt_dispatch(sid, "set", None, "Nonexistent")
+    assert main._screens[sid].active_set_id == night
+
+
 async def test_blank_command(client):
     await main._mqtt_dispatch("main", "blank", None, "blank")
     s = (await client.get("/api/state?screen=main")).json()

@@ -343,7 +343,10 @@ switch between them:
   quiet hours).
 
 Editing a set (adding items, reordering) doesn't disturb whatever set is
-currently playing.
+currently playing. Sets can also be activated over MQTT
+(`flipperboards/<screen>/set/set` with the set name or id) — so a Home
+Assistant automation can flip the board to "Happy Hour" on a schedule or a
+button press.
 
 ### Time windows (dayparting)
 
@@ -566,6 +569,7 @@ Base topic is configurable (default `flipperboards`); `<sid>` is the screen id
 | `flipperboards/<sid>/blank/set` | anything |
 | `flipperboards/<sid>/sleep/set` | `on` \| `off` — manual quiet-hours override |
 | `flipperboards/<sid>/playlist/set` | `next` \| `play` \| item index (`2`) |
+| `flipperboards/<sid>/set/set` | activate a playlist set by name or id (`Happy Hour`) |
 | `flipperboards/<sid>/scoreboard/set` | `{"home_score":3}` — partial updates OK |
 | `flipperboards/<sid>/scoreboard/<item_id>/set` | same, targeting a specific playlist item |
 | `flipperboards/<sid>/drivetime/set` | `[{"name":"HOME","dest":"123 Main St"}]` (computed via Google) or `[{"name":"HOME","minutes":23,"traffic":"heavy"}]` (ready-made, e.g. HA Waze); `clear` returns to the configured list |
