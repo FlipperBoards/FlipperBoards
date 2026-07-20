@@ -198,6 +198,7 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "weather_location": "",
         "weather_units": "imperial",
         "weather_api_key": "",
+        "google_maps_api_key": "",
         "news_api_key": "",
         "news_categories": '["technology","general"]',
         "news_sources": "[]",

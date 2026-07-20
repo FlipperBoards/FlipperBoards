@@ -5,6 +5,9 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Changed
+- Weather now uses Pirate Weather (pirateweather.net, free tier) when an API
+  key is set, replacing OpenWeatherMap; Open-Meteo remains the keyless
+  fallback
 - Canvas engine v2 for weak hardware: mid-flip poses are pre-rendered into
   the sprite atlas so every animation frame is a few same-size blits (no
   runtime scaling or per-frame allocation); animation draws on a bounded
@@ -27,6 +30,12 @@ All notable changes to FlipperBoards are documented here.
   one clack per frame scaled by how many flaps landed
 
 ### Added
+- Drive Times mode: live driving times with traffic to up to 6 destinations
+  (Google Routes API, one Route Matrix call per refresh) — dot-leader rows
+  with green/yellow/red traffic accent tiles; refreshes every 5 minutes only
+  while displayed (cost control); destinations or ready-made times can also
+  be pushed over MQTT (`drivetime/set`), so Home Assistant's free Waze
+  integration works with no Google key
 - labwc/Wayland kiosk support: `deploy/pi-kiosk/labwc-autostart.sample` for
   current Raspberry Pi OS desktop images, with docs covering the Wayland
   equivalents of screen blanking/cursor hiding and the unquoted-URL pitfall

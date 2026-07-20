@@ -197,7 +197,7 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | Mode | Description |
 |------|-------------|
 | Clock | Live time and date — updates every second |
-| Weather | Current conditions — requires a location (API key optional) |
+| Weather | Current conditions via Pirate Weather (key) or Open-Meteo (no key) |
 | News | Top headlines — falls back to BBC/Reuters RSS with no API key |
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
 | Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) |
@@ -205,6 +205,7 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | Countdown | Days / hours:minutes:seconds to any date (or count up since one) — seconds tick live |
 | Stocks | Stock & crypto prices with % change and green/red direction tiles — no API key needed |
 | Data Feed | Poll any JSON URL and render a template — follower counts, sensors, anything |
+| Drive Times | Live driving times with traffic to up to 6 destinations (Google Maps key) |
 | Text Messages | Custom messages managed in the **Text** tab |
 
 **Sports mode** rotates through the day's games with live scores and game
@@ -227,6 +228,29 @@ counts, temperature sensors, home-automation values. Example: URL
 `https://api.example.com/stats`, template `SUBS {data.followers}`. The server
 fetches whatever URL an authenticated operator configures, so treat it like
 any admin setting and deploy on a trusted network.
+
+**Drive Times mode** shows live driving times with traffic to up to 6
+destinations, one row each with dot leaders and a traffic accent tile —
+green (clear), yellow (slow), red (heavy):
+
+```
+     DRIVE TIMES
+■ HOME··········23 MIN
+■ AIRPORT·······41 MIN
+■ THE SHOP·······8 MIN
+```
+
+Set the **Google Maps API key** in Settings (Routes API enabled on the key),
+then the **origin** and **destinations** (`Name | address`, one per line) in
+the mode's ⚙ config. Times refresh **every 5 minutes while displayed** —
+fetches only happen when a screen is actually showing the mode, and one
+Route Matrix request covers all destinations. Google bills the Route Matrix
+per element (destinations × refreshes), so fewer destinations and fewer
+display-hours cost less; a board showing 6 destinations 24/7 lands in the
+hundreds of dollars per month range, while a few hours a day stays inside
+the free credit. Destinations can also be pushed over MQTT (see MQTT
+topics) — including ready-made times from Home Assistant's free Waze
+integration, which needs no Google key at all.
 
 ---
 
@@ -458,6 +482,7 @@ Base topic is configurable (default `flipperboards`); `<sid>` is the screen id
 | `flipperboards/<sid>/playlist/set` | `next` \| `play` \| item index (`2`) |
 | `flipperboards/<sid>/scoreboard/set` | `{"home_score":3}` — partial updates OK |
 | `flipperboards/<sid>/scoreboard/<item_id>/set` | same, targeting a specific playlist item |
+| `flipperboards/<sid>/drivetime/set` | `[{"name":"HOME","dest":"123 Main St"}]` (computed via Google) or `[{"name":"HOME","minutes":23,"traffic":"heavy"}]` (ready-made, e.g. HA Waze); `clear` returns to the configured list |
 
 ### State topics (published, retained)
 
@@ -508,7 +533,8 @@ mode is active again.
 | `physical_mode` | `false` | Physical frame mode |
 | `divider_width` | `4` | Pixels between tiles (0–20) |
 | `divider_color` | `#111111` | Gap color |
-| `weather_api_key` | — | OpenWeatherMap key (optional) |
+| `weather_api_key` | — | Pirate Weather key (optional) |
+| `google_maps_api_key` | — | Google Maps key for Drive Times (Routes API) |
 | `weather_location` | — | e.g. `Portland,US` |
 | `weather_units` | `imperial` | `imperial` or `metric` |
 | `news_api_key` | — | NewsAPI key (optional) |
@@ -530,9 +556,10 @@ All keys are optional — the app works without any of them.
 
 | Service | Fallback | Where to get a key |
 |---------|----------|--------------------|
-| Weather | Open-Meteo (no key needed) | [openweathermap.org/api](https://openweathermap.org/api) |
+| Weather | Open-Meteo (no key needed) | [pirateweather.net](https://pirateweather.net) — free tier |
 | News | BBC & Reuters RSS | [newsapi.org](https://newsapi.org) |
 | Calendar | n/a | Google Calendar → Settings → Secret iCal address |
+| Drive Times | MQTT-pushed times (e.g. HA Waze) | [console.cloud.google.com](https://console.cloud.google.com) — enable Routes API |
 
 ---
 
@@ -569,7 +596,7 @@ FlipperBoards/
 │   ├── plugins/             # Optional plugin modes (see PLUGINS.md)
 │   ├── services/
 │   │   ├── clock.py         # Live time/date matrix rendering
-│   │   ├── weather.py       # OpenWeatherMap + Open-Meteo fallback
+│   │   ├── weather.py       # Pirate Weather + Open-Meteo fallback
 │   │   ├── news.py          # NewsAPI + RSS fallback
 │   │   ├── quotes.py        # ZenQuotes API + built-in fallback
 │   │   ├── calendar_svc.py  # iCal parsing
