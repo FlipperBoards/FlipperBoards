@@ -14,7 +14,6 @@ class Settings(BaseSettings):
 
     # API keys (set via environment or .env file)
     weather_api_key: str | None = None
-    news_api_key: str | None = None
 
     # Comma-separated list of plugin names to load (e.g. FB_PLUGINS=billing,analytics)
     plugins: list[str] = []

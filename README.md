@@ -217,7 +217,7 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 |------|-------------|
 | Clock | Live time and date — updates every second |
 | Weather | Current conditions via Pirate Weather (key) or Open-Meteo (no key) |
-| News | Top headlines — falls back to BBC/Reuters RSS with no API key |
+| News | Google News — per-screen keyword search, source include/exclude, topic & locale; no API key |
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
 | Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) — compact `M/D` date so titles get the room |
 | Sports | Live scores across one or many leagues (NFL, NBA, MLB, NHL, college, MLS, EPL) with status filtering and full team names — no API key |
@@ -226,6 +226,23 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | Data Feed | Poll any JSON URL and render a template — follower counts, sensors, anything |
 | Drive Times | Live driving times with traffic to up to 6 destinations (Google Maps key) |
 | Text Messages | Custom messages managed in the **Text** tab |
+
+**News mode** pulls from Google News (no API key) with per-screen filtering in
+the mode's ⚙ config:
+
+- **Keyword** — free-text search (`Phoenix Suns`); supports Google operators
+  like `intitle:`, `"exact phrase"`, `OR`
+- **Only these sources / Never these sources** — comma-separated domains
+  (`espn.com, apnews.com`) become `site:` / `-site:` filters
+- **Topic** — Top Stories, World, Nation, Business, Technology, Entertainment,
+  Sports, Science, Health (used when keyword and source filters are blank)
+- **Recency** — limit searches to the past hour / 24 hours / week
+- **Language / Country** — ISO codes for locale (`en` / `US`)
+
+Different screens can run different searches — one board on `Phoenix Suns` from
+`espn.com`, another on Top Business stories. Headlines cache for 5 minutes and
+rotate one at a time. It's built on Google News RSS directly (the same feeds
+the `google-news-api` project wraps), so there's nothing to install and no key.
 
 **Sports mode** rotates through the day's games with live scores, game clocks,
 and full team names (it uses the longest name that fits — `KANSAS CITY CHIEFS`
@@ -576,7 +593,6 @@ mode is active again.
 | `google_maps_api_key` | — | Google Maps key for Drive Times (Routes API) |
 | `weather_location` | — | `Portland,US`, coordinates (`33.413, -111.604`), or labeled coords (`Home \| 33.413, -111.604`) |
 | `weather_units` | `imperial` | `imperial` or `metric` |
-| `news_api_key` | — | NewsAPI key (optional) |
 | `news_categories` | `["technology","general"]` | JSON array |
 | `calendar_ical_url` | — | iCal URL |
 | `mqtt_enabled` | `false` | Enable the MQTT bridge |
@@ -596,7 +612,7 @@ All keys are optional — the app works without any of them.
 | Service | Fallback | Where to get a key |
 |---------|----------|--------------------|
 | Weather | Open-Meteo (no key needed) | [pirateweather.net](https://pirateweather.net) — free tier |
-| News | BBC & Reuters RSS | [newsapi.org](https://newsapi.org) |
+| News | Google News (no key needed) | — |
 | Calendar | n/a | Google Calendar → Settings → Secret iCal address |
 | Drive Times | MQTT-pushed times (e.g. HA Waze) | [console.cloud.google.com](https://console.cloud.google.com) — enable Routes API |
 
@@ -636,7 +652,7 @@ FlipperBoards/
 │   ├── services/
 │   │   ├── clock.py         # Live time/date matrix rendering
 │   │   ├── weather.py       # Pirate Weather + Open-Meteo fallback
-│   │   ├── news.py          # NewsAPI + RSS fallback
+│   │   ├── news.py          # Google News RSS (search + domain/topic filters)
 │   │   ├── quotes.py        # ZenQuotes API + built-in fallback
 │   │   ├── calendar_svc.py  # iCal parsing
 │   │   ├── scoreboard.py    # Team-score matrix rendering

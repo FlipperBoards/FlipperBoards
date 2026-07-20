@@ -43,8 +43,6 @@ async def _effective_settings() -> dict:
     s = await database.get_settings()
     if not s.get("weather_api_key") and settings.weather_api_key:
         s["weather_api_key"] = settings.weather_api_key
-    if not s.get("news_api_key") and settings.news_api_key:
-        s["news_api_key"] = settings.news_api_key
     return s
 
 
@@ -160,10 +158,14 @@ def _register_builtin_modes():
             units=s.get("weather_units", "imperial"))
 
     async def render_news(rows, cols, config, s):
-        cats = json.loads(s.get("news_categories", '["general"]'))
-        srcs = json.loads(s.get("news_sources", "[]"))
         return await get_news_matrix(rows, cols,
-            api_key=s.get("news_api_key", ""), categories=cats, sources=srcs,
+            keyword=config.get("keyword", ""),
+            include_domains=config.get("include_domains", ""),
+            exclude_domains=config.get("exclude_domains", ""),
+            topic=config.get("topic", "TOP"),
+            when=config.get("when", ""),
+            language=config.get("language", "en") or "en",
+            country=config.get("country", "US") or "US",
             screen_id=config.get("_screen_id", "main"))
 
     async def render_quotes(rows, cols, config, s):
@@ -222,6 +224,56 @@ def _register_builtin_modes():
             "placeholder": "Enter text to display…",
             "help": "Single message. Leave blank to use the Text tab rotation queue.",
         }
+    }
+    _news_schema = {
+        "keyword": {
+            "type": "text",
+            "label": "Keyword",
+            "placeholder": "e.g. Phoenix Suns",
+            "help": "Google News search. Supports operators like intitle:, \"exact phrase\", OR. Leave blank to browse a topic.",
+        },
+        "include_domains": {
+            "type": "text",
+            "label": "Only these sources",
+            "placeholder": "espn.com, apnews.com",
+            "help": "Comma-separated domains — headlines come only from these.",
+        },
+        "exclude_domains": {
+            "type": "text",
+            "label": "Never these sources",
+            "placeholder": "example.com",
+            "help": "Comma-separated domains to filter out.",
+        },
+        "topic": {
+            "type": "select",
+            "label": "Topic",
+            "options": [
+                {"value": "TOP", "label": "Top Stories"},
+                {"value": "WORLD", "label": "World"},
+                {"value": "NATION", "label": "Nation"},
+                {"value": "BUSINESS", "label": "Business"},
+                {"value": "TECHNOLOGY", "label": "Technology"},
+                {"value": "ENTERTAINMENT", "label": "Entertainment"},
+                {"value": "SPORTS", "label": "Sports"},
+                {"value": "SCIENCE", "label": "Science"},
+                {"value": "HEALTH", "label": "Health"},
+            ],
+            "default": "TOP",
+            "help": "Used only when Keyword and source filters are blank.",
+        },
+        "when": {
+            "type": "select",
+            "label": "Recency (search only)",
+            "options": [
+                {"value": "", "label": "Any time"},
+                {"value": "1h", "label": "Past hour"},
+                {"value": "24h", "label": "Past 24 hours"},
+                {"value": "7d", "label": "Past week"},
+            ],
+            "default": "",
+        },
+        "language": {"type": "text", "label": "Language", "placeholder": "en", "help": "ISO 639-1 code."},
+        "country": {"type": "text", "label": "Country", "placeholder": "US", "help": "ISO 3166-1 code."},
     }
     _quotes_schema = {
         "custom_quotes": {
@@ -327,7 +379,7 @@ def _register_builtin_modes():
     builtin = [
         ModeDefinition("clock",    "Clock",         "🕐", "Live time & date",       render=render_clock),
         ModeDefinition("weather",  "Weather",       "🌤", "Current conditions",      render=render_weather),
-        ModeDefinition("news",     "News",          "📰", "Top headlines",           render=render_news),
+        ModeDefinition("news",     "News",          "📰", "Google News search",      config_schema=_news_schema, render=render_news),
         ModeDefinition("quotes",   "Quotes",        "💬", "Inspirational quotes",    config_schema=_quotes_schema, render=render_quotes),
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
         ModeDefinition("sports",   "Sports",        "🏆", "Live game scores",        config_schema=_sports_schema, render=render_sports),
@@ -1057,9 +1109,6 @@ class SettingsUpdate(BaseModel):
     weather_units: str | None = None
     weather_api_key: str | None = None
     google_maps_api_key: str | None = None
-    news_api_key: str | None = None
-    news_categories: list[str] | None = None
-    news_sources: list[str] | None = None
     calendar_ical_url: str | None = None
     sound_enabled: bool | None = None
     sound_schedule: dict | None = None
