@@ -217,7 +217,8 @@ refresh with the rotation interval (60s API cache). Configure in the mode's ⚙:
 - **Leagues** — pick one or several (NFL, NBA, MLB, NHL, college football &
   basketball, MLS, Premier League). Multiple leagues merge into one rotation,
   each game's status line tagged with its league (`NFL  3RD 7:32`).
-- **Show** — All games, or filter to Live now / Upcoming / Final.
+- **Show** — Live now, **Live + Final** (the default — usually all you care
+  about), Upcoming, or All games.
 - **Team filter** — comma-separated names or abbreviations (`CHIEFS, LAKERS`),
   matched across every selected league. Filter to one game and it stays put so
   the score digits flip live.

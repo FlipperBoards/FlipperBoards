@@ -31,8 +31,13 @@ LEAGUE_TAGS = {
     "mlb": "MLB", "nhl": "NHL", "mls": "MLS", "epl": "EPL",
 }
 
-STATUS_STATES = {"live": "in", "upcoming": "pre", "final": "post"}
-STATUS_LABELS = {"live": "LIVE", "upcoming": "UPCOMING", "final": "FINAL"}
+# Each Show option maps to the ESPN states it keeps ("all" keeps everything)
+STATUS_STATES = {
+    "live": ("in",),
+    "live_final": ("in", "post"),
+    "upcoming": ("pre",),
+}
+STATUS_LABELS = {"live": "LIVE", "live_final": "LIVE OR FINAL", "upcoming": "UPCOMING"}
 
 CACHE_SECONDS = 60
 
@@ -185,7 +190,8 @@ async def get_sports_matrix(rows: int, cols: int, league: str = "nfl",
 
     status = (status or "all").lower()
     if status in STATUS_STATES:
-        games = [g for g in games if g["state"] == STATUS_STATES[status]]
+        keep = STATUS_STATES[status]
+        games = [g for g in games if g["state"] in keep]
 
     tokens = _parse_teams(teams, team)
     if tokens:
