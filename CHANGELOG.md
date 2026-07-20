@@ -50,6 +50,14 @@ All notable changes to FlipperBoards are documented here.
   `news_sources` global settings are gone; news is configured per screen
 
 ### Added
+- Queue items are now individually configurable: a Mode item carries its own
+  config (edited with the same ⚙ fields as the Modes tab), so the same mode can
+  rotate multiple times with different settings (e.g. two News items with
+  different keywords/sources). Live modes tick from the on-screen item's config
+- Named playlist **sets**: organize the queue into named lists (tabs) and
+  rotate between them — activate one manually, or give a set a schedule
+  (start/end time + weekdays) so it auto-activates (Morning / Lunch / Dinner).
+  The scheduled set wins; a manual pick holds until the next boundary
 - Sound scheduling: restrict flip sounds to set hours/days (Config → Sound),
   evaluated server-side in the configured timezone. Individual pushes can
   override it — `sound: true` (the Text tab's Chime box, or REST/MQTT) forces

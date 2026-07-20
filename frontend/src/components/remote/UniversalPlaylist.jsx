@@ -72,6 +72,9 @@ function WindowEditor({ value, onChange }) {
 
 export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [items, setItems] = useState([])
+  const [sets, setSets] = useState([])
+  const [viewedSet, setViewedSet] = useState(null)   // set id being edited/shown
+  const [editingSetSchedule, setEditingSetSchedule] = useState(false)
   const [availableModes, setAvailableModes] = useState([])
   const [showAdd, setShowAdd] = useState(false)
   const [addType, setAddType] = useState('mode')
@@ -130,12 +133,73 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     }).catch(() => {})
   }, [])
 
-  const load = useCallback(async () => {
-    const res = await fetch(`/api/playlist${qs}`)
-    if (res.ok) setItems(await res.json())
+  const loadSets = useCallback(async () => {
+    const res = await fetch(`/api/playlist/sets${qs}`)
+    if (!res.ok) return
+    const list = await res.json()
+    setSets(list)
+    setViewedSet(prev => {
+      if (prev && list.some(s => s.id === prev)) return prev
+      const active = list.find(s => s.active) || list[0]
+      return active ? active.id : null
+    })
   }, [qs])
 
+  const load = useCallback(async () => {
+    if (viewedSet == null) return
+    const res = await fetch(`/api/playlist${qs}&set=${viewedSet}`)
+    if (res.ok) setItems(await res.json())
+  }, [qs, viewedSet])
+
+  useEffect(() => { loadSets() }, [loadSets])
   useEffect(() => { load() }, [load])
+
+  const activeSet = sets.find(s => s.active)
+  const viewedSetObj = sets.find(s => s.id === viewedSet)
+  const setQ = viewedSet != null ? `${qs}&set=${viewedSet}` : qs
+
+  const addSet = async () => {
+    const name = window.prompt('New set name', `Set ${sets.length + 1}`)
+    if (!name?.trim()) return
+    try {
+      const { id } = await apiJson(`/api/playlist/sets${qs}`, 'POST', { name: name.trim() })
+      await loadSets()
+      setViewedSet(id)
+    } catch (err) { showToast(`Could not add set: ${err.message}`) }
+  }
+
+  const renameSet = async (s) => {
+    const name = window.prompt('Rename set', s.name)
+    if (!name?.trim() || name.trim() === s.name) return
+    try {
+      await apiJson(`/api/playlist/sets/${s.id}${qs}`, 'PUT', { name: name.trim() })
+      await loadSets()
+    } catch (err) { showToast(`Rename failed: ${err.message}`) }
+  }
+
+  const deleteSet = async (s) => {
+    if (sets.length <= 1) return
+    if (!window.confirm(`Delete set "${s.name}" and its items?`)) return
+    try {
+      await apiFetch(`/api/playlist/sets/${s.id}${qs}`, { method: 'DELETE' })
+      setViewedSet(null)
+      await loadSets()
+    } catch (err) { showToast(`Delete failed: ${err.message}`) }
+  }
+
+  const activateSet = async (s) => {
+    try {
+      await apiFetch(`/api/playlist/sets/${s.id}/activate${qs}`, { method: 'POST' })
+      await loadSets()
+    } catch (err) { showToast(`Activate failed: ${err.message}`) }
+  }
+
+  const saveSetSchedule = async (s, schedule) => {
+    try {
+      await apiJson(`/api/playlist/sets/${s.id}${qs}`, 'PUT', { schedule })
+      await loadSets()
+    } catch (err) { showToast(`Schedule update failed: ${err.message}`) }
+  }
 
   const addItem = async () => {
     setSaving(true)
@@ -164,7 +228,7 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
       } else {
         content = { mode: addMode, config: addConfig }
       }
-      await apiJson(`/api/playlist${qs}`, 'POST',
+      await apiJson(`/api/playlist${setQ}`, 'POST',
                     { type: addType, content, duration: addDuration, window: addWindow })
       await load()
       setShowAdd(false)
@@ -207,9 +271,9 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   }
 
   const clear = async () => {
-    if (!window.confirm(`Remove all ${items.length} item${items.length !== 1 ? 's' : ''}?`)) return
+    if (!window.confirm(`Remove all ${items.length} item${items.length !== 1 ? 's' : ''} in this set?`)) return
     try {
-      await apiFetch(`/api/playlist/clear${qs}`, { method: 'POST' })
+      await apiFetch(`/api/playlist/clear${setQ}`, { method: 'POST' })
       setItems([])
     } catch (err) {
       showToast(`Clear failed: ${err.message}`)
@@ -348,10 +412,74 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
             style={{ color: 'var(--text-3)' }}
             onMouseEnter={e => { e.currentTarget.style.color = '#ef4444' }}
             onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)' }}>
-            Clear All
+            Clear Set
           </button>
         )}
       </div>
+
+      {/* Set tabs — each set is an independent list; the active set is what plays */}
+      {sets.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {sets.map(s => (
+              <button key={s.id} onClick={() => { setViewedSet(s.id); setEditingSetSchedule(false) }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-mono transition-all"
+                style={viewedSet === s.id
+                  ? { background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', color: 'var(--text-1)' }
+                  : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>
+                {s.active && <span title="Now playing" style={{ color: '#4ade80' }}>●</span>}
+                {s.name}
+                {s.schedule?.enabled && <span title="Scheduled" style={{ opacity: 0.7 }}>⏱</span>}
+              </button>
+            ))}
+            <button onClick={addSet}
+              className="px-2.5 py-1 rounded-full text-[11px] font-mono transition-all"
+              style={{ border: '1px dashed var(--border)', color: 'var(--text-3)' }}>
+              + Set
+            </button>
+          </div>
+
+          {/* Viewed-set actions */}
+          {viewedSetObj && (
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+              {!viewedSetObj.active && (
+                <button onClick={() => activateSet(viewedSetObj)} className="fb-btn-ghost px-2.5 py-1">
+                  ▶ Activate
+                </button>
+              )}
+              {viewedSetObj.active && <span style={{ color: '#4ade80' }}>● Playing now</span>}
+              <button onClick={() => setEditingSetSchedule(v => !v)}
+                className="transition-colors"
+                style={{ color: viewedSetObj.schedule?.enabled ? 'var(--accent)' : 'var(--text-3)' }}>
+                ⏱ Schedule
+              </button>
+              <button onClick={() => renameSet(viewedSetObj)} style={{ color: 'var(--text-3)' }}>Rename</button>
+              {sets.length > 1 && (
+                <button onClick={() => deleteSet(viewedSetObj)} style={{ color: 'var(--text-3)' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#ef4444' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)' }}>Delete</button>
+              )}
+            </div>
+          )}
+
+          {editingSetSchedule && viewedSetObj && (
+            <div className="rounded-xl p-3 space-y-2"
+              style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}>
+              <p className="section-label" style={{ color: 'var(--accent)' }}>
+                Auto-activate “{viewedSetObj.name}” during a time window
+              </p>
+              <WindowEditor
+                value={viewedSetObj.schedule?.enabled != null && Object.keys(viewedSetObj.schedule).length
+                  ? { ...DEFAULT_WINDOW, ...viewedSetObj.schedule } : null}
+                onChange={sch => saveSetSchedule(viewedSetObj, sch)}
+              />
+              <button onClick={() => setEditingSetSchedule(false)} className="fb-btn-ghost w-full py-1.5 text-[11px]">
+                Done
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Item list */}
       {items.length > 0 && (

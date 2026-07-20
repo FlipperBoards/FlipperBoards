@@ -113,6 +113,7 @@ class ScreenState:
         # Universal playlist — drives rotation when non-empty
         self.playlist_items: list[dict] = []
         self.playlist_pos: int = 0
+        self.active_set_id: int | None = None  # which named set is currently playing
         self.mode: str = "clock"
         self.mode_config: dict = {}  # config used for the current render (per-item or screen)
         self.mode_idx: int = 0
@@ -710,6 +711,35 @@ def _item_eligible(item: dict, now) -> bool:
                            w.get("days") or list(range(7)))
 
 
+async def _resolve_active_set(state: ScreenState, now=None) -> int | None:
+    """Which named set should be playing: the first set whose schedule window
+    currently matches, else the manually-activated set, else the first set.
+    (get_sets auto-creates a default set, so this is None only for empty DBs.)"""
+    sets = await database.get_sets(state.screen_id)
+    if not sets:
+        return None
+    now = now or await _now_local()
+    for s in sets:
+        sched = s.get("schedule") or {}
+        if sched.get("enabled") and _time_in_window(
+                now, sched.get("start_time", ""), sched.get("end_time", ""),
+                sched.get("days") or list(range(7))):
+            return s["id"]
+    if state.active_set_id and any(s["id"] == state.active_set_id for s in sets):
+        return state.active_set_id
+    return sets[0]["id"]
+
+
+async def _reload_playlist(state: ScreenState, resolve: bool = True) -> None:
+    """Load the active set's items into state.playlist_items. resolve=True
+    re-picks the active set (schedule/manual/first); False keeps the current
+    one (used after item edits, which never change which set is active)."""
+    if resolve:
+        state.active_set_id = await _resolve_active_set(state)
+    state.playlist_items = await database.get_playlist_items(
+        state.screen_id, set_id=state.active_set_id)
+
+
 async def _sleep_screen(state: ScreenState) -> None:
     _cancel_push_timer(state)
     _stop_screen_rotation(state.screen_id)
@@ -768,6 +798,24 @@ async def _schedule_tick_loop():
                 elif (first_pass or crossed) and not in_window and state.sleeping:
                     logger.info("quiet hours: waking screen '%s'", state.screen_id)
                     await _wake_screen(state)
+
+            # Scheduled playlist sets: activate the set whose window matches now.
+            # Skipped for sleeping screens (they resume on wake).
+            for state in list(_screens.values()):
+                if state.sleeping:
+                    continue
+                prev = state.active_set_id
+                target = await _resolve_active_set(state, now)
+                if target != prev:
+                    logger.info("playlist set switch on '%s': %s -> %s",
+                                state.screen_id, prev, target)
+                    state.active_set_id = target
+                    await _reload_playlist(state, resolve=False)
+                    state.playlist_pos = 0
+                    if state.playlist_items:
+                        await _render_playlist_item(state, transition="sweep")
+                    _stop_screen_rotation(state.screen_id)
+                    _start_screen_rotation(state.screen_id)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -920,8 +968,8 @@ async def lifespan(app: FastAPI):
         state = ScreenState(sid, screen["name"], screen["rows"], screen["cols"])
         state.schedule = screen.get("schedule") or {}
 
-        items = await database.get_playlist_items(sid)
-        state.playlist_items = items
+        await _reload_playlist(state)  # picks the active set (schedule/first)
+        items = state.playlist_items
         saved = await database.load_screen_state(sid)
 
         if items:
@@ -1227,6 +1275,13 @@ class PlaylistItemUpdate(BaseModel):
 
 class PlaylistReorder(BaseModel):
     ids: list[int]
+
+class SetCreate(BaseModel):
+    name: str = "Set"
+
+class SetUpdate(BaseModel):
+    name: str | None = None
+    schedule: PlaylistWindow | None = None   # when this set is auto-activated
 
 class DesignCreate(BaseModel):
     name: str
@@ -1669,41 +1724,124 @@ async def delete_upload(image_id: int):
 
 # ── Universal content playlist ────────────────────────────────────────────────
 
+# ── Playlist sets ─────────────────────────────────────────────────────────────
+
+@app.get("/api/playlist/sets")
+async def get_playlist_sets(screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    sets = await database.get_sets(screen)
+    active = await _resolve_active_set(state)
+    return [{**s, "active": s["id"] == active} for s in sets]
+
+
+@app.post("/api/playlist/sets", status_code=201)
+async def create_playlist_set(body: SetCreate, screen: str = Query(default="main")):
+    get_screen_state(screen)
+    await database.get_sets(screen)  # ensure the default set exists first
+    set_id = await database.add_set(screen, body.name.strip() or "Set")
+    return {"status": "created", "id": set_id}
+
+
+@app.put("/api/playlist/sets/{set_id}")
+async def update_playlist_set(set_id: int, body: SetUpdate, screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    await _assert_set_on_screen(screen, set_id)
+    await database.update_set(set_id, name=body.name,
+                              schedule=body.schedule.model_dump() if body.schedule else None)
+    # A schedule change can move which set is active — re-resolve + re-render
+    if body.schedule is not None:
+        await _reactivate(state)
+    return {"status": "updated"}
+
+
+@app.delete("/api/playlist/sets/{set_id}")
+async def delete_playlist_set(set_id: int, screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    sets = await _assert_set_on_screen(screen, set_id)
+    if len(sets) <= 1:
+        raise HTTPException(400, "Cannot delete the only set")
+    await database.delete_set(set_id)
+    if state.active_set_id == set_id:
+        state.active_set_id = None  # force re-resolve to another set
+    await _reactivate(state)
+    return {"status": "deleted"}
+
+
+@app.post("/api/playlist/sets/{set_id}/activate")
+async def activate_playlist_set(set_id: int, screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    await _assert_set_on_screen(screen, set_id)
+    state.active_set_id = set_id
+    await _reload_playlist(state, resolve=False)
+    state.playlist_pos = 0
+    _cancel_push_timer(state)
+    if state.playlist_items:
+        await _render_playlist_item(state, transition="sweep")
+    _stop_screen_rotation(screen)
+    _start_screen_rotation(screen)
+    return {"status": "ok", "active_set_id": set_id}
+
+
+async def _assert_set_on_screen(screen: str, set_id: int) -> list[dict]:
+    sets = await database.get_sets(screen)
+    if not any(s["id"] == set_id for s in sets):
+        raise HTTPException(404, f"Set {set_id} not found on screen '{screen}'")
+    return sets
+
+
+async def _reactivate(state: ScreenState) -> None:
+    """Re-resolve the active set and re-render if it changed what's playing."""
+    prev = state.active_set_id
+    await _reload_playlist(state)
+    if state.active_set_id != prev:
+        state.playlist_pos = 0
+        if state.playlist_items:
+            await _render_playlist_item(state, transition="sweep")
+        _stop_screen_rotation(state.screen_id)
+        _start_screen_rotation(state.screen_id)
+
+
+# ── Universal content playlist items ──────────────────────────────────────────
+
 @app.get("/api/playlist")
-async def get_playlist(screen: str = Query(default="main")):
-    return await database.get_playlist_items(screen)
+async def get_playlist(screen: str = Query(default="main"), set: int | None = Query(default=None)):
+    """Items for a given set (default: the active set)."""
+    state = get_screen_state(screen)
+    target = set if set is not None else (await _resolve_active_set(state))
+    return await database.get_playlist_items(screen, set_id=target)
 
 
 @app.post("/api/playlist", status_code=201)
-async def add_playlist_item(body: PlaylistItemCreate, screen: str = Query(default="main")):
+async def add_playlist_item(body: PlaylistItemCreate, screen: str = Query(default="main"),
+                            set: int | None = Query(default=None)):
     state = get_screen_state(screen)
+    target = set if set is not None else await _resolve_active_set(state)
     item_id = await database.add_playlist_item(
         screen, body.type, body.content, body.duration,
-        window=body.window.model_dump() if body.window else None)
-    state.playlist_items = await database.get_playlist_items(screen)
+        window=body.window.model_dump() if body.window else None, set_id=target)
+    await _reload_playlist(state, resolve=False)
     return {"status": "created", "id": item_id}
 
 
-def _screen_playlist_item(state: ScreenState, item_id: int) -> dict:
-    """404 unless the item belongs to this screen's playlist — item ids are
+async def _assert_item_on_screen(screen: str, item_id: int) -> dict:
+    """404 unless the item belongs to this screen (any set) — item ids are
     global autoincrement, so without this check one screen can mutate another's."""
-    item = next((i for i in state.playlist_items if i["id"] == item_id), None)
+    allitems = await database.get_playlist_items(screen)
+    item = next((i for i in allitems if i["id"] == item_id), None)
     if item is None:
-        raise HTTPException(404, f"Playlist item {item_id} not found on screen '{state.screen_id}'")
+        raise HTTPException(404, f"Playlist item {item_id} not found on screen '{screen}'")
     return item
 
 
 @app.put("/api/playlist/{item_id}")
 async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: str = Query(default="main")):
     state = get_screen_state(screen)
-    state.playlist_items = await database.get_playlist_items(screen)
-    _screen_playlist_item(state, item_id)
+    await _assert_item_on_screen(screen, item_id)
     await database.update_playlist_item(
         item_id, body.type, body.content, body.duration,
         window=body.window.model_dump() if body.window else None)
-    state.playlist_items = await database.get_playlist_items(screen)
+    await _reload_playlist(state, resolve=False)
     # Live-update: if the edited item is on screen now, re-render in place.
-    # No transition — only tiles whose character changed will flip.
     if state.playlist_items:
         cur = state.playlist_items[state.playlist_pos % len(state.playlist_items)]
         if cur["id"] == item_id:
@@ -1714,12 +1852,11 @@ async def update_playlist_item(item_id: int, body: PlaylistItemUpdate, screen: s
 @app.delete("/api/playlist/{item_id}")
 async def remove_playlist_item(item_id: int, screen: str = Query(default="main")):
     state = get_screen_state(screen)
-    state.playlist_items = await database.get_playlist_items(screen)
-    _screen_playlist_item(state, item_id)
+    await _assert_item_on_screen(screen, item_id)
     was_current = (state.playlist_items
                    and state.playlist_items[state.playlist_pos % len(state.playlist_items)]["id"] == item_id)
     await database.remove_playlist_item(item_id)
-    state.playlist_items = await database.get_playlist_items(screen)
+    await _reload_playlist(state, resolve=False)
     if state.playlist_items:
         state.playlist_pos = min(state.playlist_pos, len(state.playlist_items) - 1)
         if was_current:
@@ -1733,24 +1870,26 @@ async def remove_playlist_item(item_id: int, screen: str = Query(default="main")
 async def reorder_playlist(body: PlaylistReorder, screen: str = Query(default="main")):
     state = get_screen_state(screen)
     await database.reorder_playlist_items(screen, body.ids)
-    state.playlist_items = await database.get_playlist_items(screen)
+    await _reload_playlist(state, resolve=False)
     return {"status": "ok"}
 
 
 @app.post("/api/playlist/clear")
-async def clear_playlist(screen: str = Query(default="main")):
+async def clear_playlist(screen: str = Query(default="main"), set: int | None = Query(default=None)):
+    """Clear a set's items (default: the active set)."""
     state = get_screen_state(screen)
-    await database.clear_playlist_items(screen)
-    state.playlist_items = []
+    target = set if set is not None else await _resolve_active_set(state)
+    await database.clear_playlist_items(screen, set_id=target)
+    await _reload_playlist(state, resolve=False)
     state.playlist_pos = 0
     return {"status": "ok"}
 
 
 @app.post("/api/playlist/play")
 async def play_playlist(screen: str = Query(default="main")):
-    """Jump to the start of the playlist and restart the rotation timer."""
+    """Jump to the start of the active set and restart the rotation timer."""
     state = get_screen_state(screen)
-    state.playlist_items = await database.get_playlist_items(screen)
+    await _reload_playlist(state, resolve=False)
     if not state.playlist_items:
         raise HTTPException(400, "Playlist is empty")
     state.playlist_pos = 0
@@ -1764,9 +1903,9 @@ async def play_playlist(screen: str = Query(default="main")):
 
 @app.post("/api/playlist/jump")
 async def jump_playlist(body: PlaylistJump, screen: str = Query(default="main")):
-    """Jump to a specific playlist position and restart the rotation timer."""
+    """Jump to a specific position in the active set and restart the rotation timer."""
     state = get_screen_state(screen)
-    state.playlist_items = await database.get_playlist_items(screen)
+    await _reload_playlist(state, resolve=False)
     if not state.playlist_items:
         raise HTTPException(400, "Playlist is empty")
     if not 0 <= body.pos < len(state.playlist_items):
