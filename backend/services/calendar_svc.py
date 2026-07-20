@@ -3,9 +3,33 @@ from datetime import datetime
 import pytz
 from charmap import text_to_row, blank_matrix
 
-DAYS_SHORT = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-MONTHS_SHORT = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+def _compact_time(dt: datetime) -> str:
+    """Shortest legible time: 7P, 11A, 12P (noon), 12A (midnight), 7:15P."""
+    hour = dt.hour % 12 or 12
+    meridian = "A" if dt.hour < 12 else "P"
+    if dt.minute == 0:
+        return f"{hour}{meridian}"
+    return f"{hour}:{dt.minute:02d}{meridian}"
+
+
+def _event_line(cols: int, date_str: str, time_str: str, title: str) -> str:
+    """`7/20 PUTTING PRACTICE  7P` — short date left, time right-aligned (or
+    absent for all-day), title fills everything in between."""
+    gaps = 2 if time_str else 1
+    available = cols - len(date_str) - len(time_str) - gaps
+    title = (title or "").strip().upper()
+    if available < 1:
+        available = 1
+    if len(title) > available:
+        title = title[: available - 1] + "." if available > 1 else title[:1]
+
+    left = f"{date_str} {title}"
+    if time_str:
+        # Right-align the time, keeping at least one column of gap
+        pad = max(1, cols - len(left) - len(time_str))
+        return (left + " " * pad + time_str)[:cols]
+    return left[:cols]
 
 
 async def get_calendar_matrix(rows: int, cols: int, ical_url: str = "",
@@ -33,21 +57,9 @@ async def get_calendar_matrix(rows: int, cols: int, ical_url: str = "",
 
     for i, event in enumerate(events[:rows - 1]):
         dt = event["start"]
-        day = DAYS_SHORT[dt.weekday()]
-        mon = MONTHS_SHORT[dt.month - 1]
-        date_part = f"{day} {mon} {dt.day}"
-        time_part = f"{dt.strftime('%I:%M%p').lstrip('0')}"
-        title = event["title"]
-
-        # Truncate title to fit
-        available = cols - len(date_part) - len(time_part) - 2
-        if len(title) > available:
-            title = title[:available - 1] + "."
-
-        line = f"{date_part} {title.upper()}"
-        if len(line) + len(time_part) + 1 <= cols:
-            line = line + " " * (cols - len(line) - len(time_part)) + time_part
-
+        date_str = f"{dt.month}/{dt.day}"
+        time_str = "" if event.get("all_day") else _compact_time(dt)
+        line = _event_line(cols, date_str, time_str, event["title"])
         matrix[i + 1] = text_to_row(line, cols)
 
     return matrix
@@ -92,7 +104,8 @@ async def _fetch_events(ical_url: str, timezone: str) -> list:
             start = current_event.get("start")
             title = current_event.get("title", "UNTITLED")
             if start and start > now:
-                events.append({"start": start, "title": title})
+                events.append({"start": start, "title": title,
+                               "all_day": current_event.get("all_day", False)})
         elif in_event:
             if line.startswith("SUMMARY"):
                 current_event["title"] = line.split(":", 1)[-1].strip()
@@ -101,6 +114,8 @@ async def _fetch_events(ical_url: str, timezone: str) -> list:
                 start_dt = _parse_ical_dt(dt_str, tz)
                 if start_dt:
                     current_event["start"] = start_dt
+                    # Date-only DTSTART (no time component) → all-day event
+                    current_event["all_day"] = "T" not in dt_str
 
     events.sort(key=lambda e: e["start"])
     return events[:10]
