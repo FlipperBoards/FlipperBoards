@@ -145,6 +145,70 @@ function SecuritySection() {
   )
 }
 
+const SOUND_DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']  // 0 = Monday
+
+function parseSchedule(raw) {
+  if (raw && typeof raw === 'object') return raw
+  try { return JSON.parse(raw || '{}') } catch { return {} }
+}
+
+function SoundSchedule({ value, onChange }) {
+  const sched = parseSchedule(value)
+  const enabled = !!sched.enabled
+  const days = sched.days || [0, 1, 2, 3, 4, 5, 6]
+  const update = (patch) => onChange({ ...sched, ...patch })
+  const toggleDay = (d) =>
+    update({ days: days.includes(d) ? days.filter(x => x !== d) : [...days, d].sort((a, b) => a - b) })
+
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--text-2)' }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={e => update({
+            enabled: e.target.checked,
+            on_time: sched.on_time || '09:00',
+            off_time: sched.off_time || '22:00',
+          })}
+        />
+        Only play sound during set hours
+      </label>
+      {enabled && (
+        <>
+          <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-2)' }}>
+            <span>From</span>
+            <input type="time" value={sched.on_time || '09:00'}
+              onChange={e => update({ on_time: e.target.value })} className="fb-input py-1" />
+            <span>to</span>
+            <input type="time" value={sched.off_time || '22:00'}
+              onChange={e => update({ off_time: e.target.value })} className="fb-input py-1" />
+          </div>
+          <div className="flex gap-1">
+            {SOUND_DAYS.map((lbl, i) => {
+              const on = days.includes(i)
+              return (
+                <button key={i} type="button" onClick={() => toggleDay(i)}
+                  className="w-7 h-7 rounded text-[11px] transition-all"
+                  style={{
+                    background: on ? 'var(--accent-dim)' : 'var(--surface)',
+                    border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border)'}`,
+                    color: on ? 'var(--text-1)' : 'var(--text-3)',
+                  }}>
+                  {lbl}
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>
+            Outside these hours the board stays silent. Announcements pushed with sound still ping.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
   const [s, setS] = useState(initialSettings || {})
   const [saved, setSaved] = useState(false)
@@ -174,6 +238,7 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         news_api_key:      s.news_api_key      || '',
         calendar_ical_url: s.calendar_ical_url || '',
         sound_enabled:     s.sound_enabled !== 'false',
+        sound_schedule:    parseSchedule(s.sound_schedule),
         flip_duration:     Number(s.flip_duration) || 120,
         divider_width:     Number(s.divider_width) || 4,
         divider_color:     s.divider_color     || '#111111',
@@ -382,6 +447,11 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
             <option value="false">Disabled</option>
           </select>
         </Field>
+        {s.sound_enabled !== 'false' && (
+          <Field label="Sound Schedule">
+            <SoundSchedule value={s.sound_schedule} onChange={v => set('sound_schedule', v)} />
+          </Field>
+        )}
       </Section>
 
       {/* MQTT */}

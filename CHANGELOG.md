@@ -39,6 +39,12 @@ All notable changes to FlipperBoards are documented here.
   one clack per frame scaled by how many flaps landed
 
 ### Added
+- Sound scheduling: restrict flip sounds to set hours/days (Config → Sound),
+  evaluated server-side in the configured timezone. Individual pushes can
+  override it — `sound: true` (the Text tab's Chime box, or REST/MQTT) forces
+  the clatter for an announcement even when the board is muted or off-schedule;
+  `sound: false` pushes silently. `?sound=0/1` still hard-overrides a single
+  display
 - Sports mode now takes multiple leagues at once (merged into one rotation,
   each row tagged with its league), a status filter (Live / Live + Final /
   Upcoming / All, defaulting to Live + Final), and multi-team filtering

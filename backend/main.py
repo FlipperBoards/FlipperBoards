@@ -485,7 +485,11 @@ async def advance_screen_mode(screen_id: str):
     await _broadcast_screen(state, transition="sweep" if len(enabled) > 1 else None)
 
 
-async def _broadcast_screen(state: ScreenState, transition: str | None = None):
+async def _broadcast_screen(state: ScreenState, transition: str | None = None,
+                            sound: bool | None = None):
+    # sound=None → use the current schedule state; an explicit True/False lets
+    # a push force the flip clatter (an announcement) or silence it regardless.
+    snd = _sound_state["allowed"] if sound is None else sound
     if state.photo_url is not None:
         await manager.broadcast(state.screen_id, {
             "type": "photo_split",
@@ -493,6 +497,7 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
             "rows": state.rows,
             "cols": state.cols,
             "screen_id": state.screen_id,
+            "sound": snd,
         })
     elif state.color_matrix is not None:
         await manager.broadcast(state.screen_id, {
@@ -501,6 +506,7 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
             "rows": state.rows,
             "cols": state.cols,
             "screen_id": state.screen_id,
+            "sound": snd,
         })
     else:
         msg = {
@@ -510,6 +516,7 @@ async def _broadcast_screen(state: ScreenState, transition: str | None = None):
             "cols": state.cols,
             "mode": state.mode,
             "screen_id": state.screen_id,
+            "sound": snd,
         }
         # Per-tile text colors only apply to text content — gating by mode
         # means stale color maps can never leak into other modes
@@ -599,6 +606,36 @@ async def _now_local():
     except Exception:
         tz = pytz.utc
     return datetime.now(tz)
+
+
+# Whether flip sounds are currently allowed, recomputed each tick (and on
+# settings change). Broadcasts read this so the client stays a dumb player —
+# the server owns the schedule, using the configured timezone.
+_sound_state = {"allowed": True}
+
+
+def _sound_schedule(db_settings: dict) -> dict:
+    try:
+        return json.loads(db_settings.get("sound_schedule") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _sound_allowed_at(db_settings: dict, now) -> bool:
+    """Master switch AND (no schedule OR inside the schedule's ON window)."""
+    if db_settings.get("sound_enabled", "true") == "false":
+        return False
+    sched = _sound_schedule(db_settings)
+    if not sched.get("enabled"):
+        return True
+    return _time_in_window(now, sched.get("on_time", ""), sched.get("off_time", ""),
+                           sched.get("days") or list(range(7)))
+
+
+async def _refresh_sound_state(db_settings: dict | None = None) -> bool:
+    db_settings = db_settings or await _effective_settings()
+    _sound_state["allowed"] = _sound_allowed_at(db_settings, await _now_local())
+    return _sound_state["allowed"]
 
 
 def _item_eligible(item: dict, now) -> bool:
@@ -719,6 +756,7 @@ async def _clock_tick_loop():
         try:
             await asyncio.sleep(1)
             db_settings = await _effective_settings()
+            await _refresh_sound_state(db_settings)
             for sid, state in list(_screens.items()):
                 if state.mode != "drivetime":
                     _drivetime_refreshed.pop(sid, None)
@@ -860,6 +898,8 @@ async def lifespan(app: FastAPI):
         if state.playlist_items:
             await _render_playlist_item(state)
 
+    await _refresh_sound_state()  # so the first second reflects the schedule
+
     _clock_task = asyncio.create_task(_clock_tick_loop())
     global _sched_task
     _sched_task = asyncio.create_task(_schedule_tick_loop())
@@ -993,14 +1033,17 @@ async def auth_configure(body: AuthConfigure, request: Request, response: Respon
 class DisplayContent(BaseModel):
     text: str
     duration: int | None = Field(default=None, ge=1)  # None = until manually changed
+    sound: bool | None = None  # force flip sound on/off for this push (e.g. an announcement)
 
 class MatrixContent(BaseModel):
     matrix: list[list[int]]
     duration: int | None = Field(default=None, ge=1)
+    sound: bool | None = None
 
 class ColorMatrixContent(BaseModel):
     color_matrix: list[list[str]]
     duration: int | None = Field(default=None, ge=1)
+    sound: bool | None = None
 
 class SettingsUpdate(BaseModel):
     rotation_interval: int | None = Field(default=None, ge=MIN_ROTATION_SECONDS, le=86400)
@@ -1019,6 +1062,7 @@ class SettingsUpdate(BaseModel):
     news_sources: list[str] | None = None
     calendar_ical_url: str | None = None
     sound_enabled: bool | None = None
+    sound_schedule: dict | None = None
     divider_width: int | None = None
     divider_color: str | None = None
     physical_mode: bool | None = None
@@ -1384,7 +1428,7 @@ async def push_text(content: DisplayContent, screen: str = Query(default="main")
     state.photo_url = None
     state.mode = "text_push"
     _schedule_revert(state, screen, content.duration)
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, sound=content.sound)
     return {"status": "ok", "screen": screen}
 
 
@@ -1397,7 +1441,7 @@ async def push_matrix(content: MatrixContent, screen: str = Query(default="main"
     state.photo_url = None
     state.mode = "matrix_push"
     _schedule_revert(state, screen, content.duration)
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, sound=content.sound)
     return {"status": "ok", "screen": screen}
 
 
@@ -1417,7 +1461,7 @@ async def push_color_matrix(content: ColorMatrixContent, screen: str = Query(def
     state.photo_url = None
     state.mode = "image_push"
     _schedule_revert(state, screen, content.duration)
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, sound=content.sound)
     return {"status": "ok", "screen": screen}
 
 
@@ -1427,6 +1471,7 @@ async def push_photo(
     name: str = Form(default=''),
     folder: str = Form(default=''),
     duration: int | None = Form(default=None),
+    sound: bool | None = Form(default=None),
     screen: str = Query(default="main"),
 ):
     state = get_screen_state(screen)
@@ -1436,12 +1481,14 @@ async def push_photo(
     state.color_matrix = None
     state.mode = "photo_push"
     _schedule_revert(state, screen, duration)
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, sound=sound)
     return {"status": "ok", "screen": screen, **img}
 
 
 @app.post("/api/display/photo/push/{image_id}")
-async def push_library_photo(image_id: int, screen: str = Query(default="main"), duration: int | None = Query(default=None)):
+async def push_library_photo(image_id: int, screen: str = Query(default="main"),
+                             duration: int | None = Query(default=None),
+                             sound: bool | None = Query(default=None)):
     """Push an already-uploaded library image to the display without re-uploading."""
     img = await database.get_image(image_id)
     if not img:
@@ -1454,7 +1501,7 @@ async def push_library_photo(image_id: int, screen: str = Query(default="main"),
     state.color_matrix = None
     state.mode = "photo_push"
     _schedule_revert(state, screen, duration)
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, sound=sound)
     return {"status": "ok", "image_url": state.photo_url}
 
 
@@ -1701,7 +1748,8 @@ async def delete_design(design_id: int):
 
 @app.post("/api/designs/{design_id}/push")
 async def push_design(design_id: int, screen: str = Query(default="main"),
-                      duration: int | None = Query(default=None)):
+                      duration: int | None = Query(default=None),
+                      sound: bool | None = Query(default=None)):
     design = await database.get_design(design_id)
     if not design:
         raise HTTPException(404, "Design not found")
@@ -1712,7 +1760,7 @@ async def push_design(design_id: int, screen: str = Query(default="main"),
     state.photo_url = None
     state.mode = "matrix_push"
     _schedule_revert(state, screen, duration)
-    await _broadcast_screen(state)
+    await _broadcast_screen(state, sound=sound)
     return {"status": "ok"}
 
 
@@ -1742,13 +1790,16 @@ async def update_settings(body: SettingsUpdate):
     for key, value in updates.items():
         if isinstance(value, bool):
             await database.update_setting(key, "true" if value else "false")
-        elif isinstance(value, list):
+        elif isinstance(value, (list, dict)):
             await database.update_setting(key, json.dumps(value))
         else:
             await database.update_setting(key, str(value))
 
     if "rotation_interval" in updates:
         _restart_all_rotations()
+
+    if "sound_enabled" in updates or "sound_schedule" in updates:
+        await _refresh_sound_state()
 
     if _mqtt and any(k.startswith("mqtt_") for k in updates):
         await _mqtt.restart()
@@ -1839,6 +1890,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
         {"type": "modes_update", "modes": _merge_modes(await database.get_modes(screen))},
     ]
     if state:
+        snd = _sound_state["allowed"]
         if state.photo_url is not None:
             initial_msgs.insert(0, {
                 "type": "photo_split",
@@ -1846,6 +1898,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
                 "rows": state.rows,
                 "cols": state.cols,
                 "screen_id": screen,
+                "sound": snd,
             })
         elif state.color_matrix is not None:
             initial_msgs.insert(0, {
@@ -1854,6 +1907,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
                 "rows": state.rows,
                 "cols": state.cols,
                 "screen_id": screen,
+                "sound": snd,
             })
         else:
             initial = {
@@ -1863,6 +1917,7 @@ async def websocket_endpoint(ws: WebSocket, screen: str = Query(default="main"))
                 "cols": state.cols,
                 "mode": state.mode,
                 "screen_id": screen,
+                "sound": snd,
             }
             if state.text_colors and state.mode in ("text_push", "text"):
                 initial["text_colors"] = state.text_colors
@@ -1904,11 +1959,16 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
     state = _screens[screen_id]
     data = _mqtt_json(payload)
 
+    # Any push command may carry "sound": true/false to force the flip
+    # clatter on (announcement) or off, regardless of the sound schedule.
+    snd = data.get("sound") if data else None
+
     try:
         if command == "text":
             text = data.get("text", "") if data else payload
             duration = data.get("duration") if data else None
-            await push_text(DisplayContent(text=text, duration=duration), screen=screen_id)
+            await push_text(DisplayContent(text=text, duration=duration, sound=snd),
+                            screen=screen_id)
             if _mqtt:
                 await _mqtt.publish_screen_state(state, text=text)
 
@@ -1916,7 +1976,8 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
             if not data or "matrix" not in data:
                 return
             await push_matrix(MatrixContent(matrix=data["matrix"],
-                                            duration=data.get("duration")), screen=screen_id)
+                                            duration=data.get("duration"),
+                                            sound=snd), screen=screen_id)
 
         elif command == "design":
             ref = data.get("design") if data else payload
@@ -1927,7 +1988,7 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
                  if str(d["id"]) == str(ref) or d["name"].lower() == str(ref).lower()),
                 None)
             if design:
-                await push_design(design["id"], screen=screen_id, duration=duration)
+                await push_design(design["id"], screen=screen_id, duration=duration, sound=snd)
             else:
                 logger.warning(f"MQTT: design '{ref}' not found")
 
@@ -1940,7 +2001,7 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
                  if str(i["id"]) == str(ref) or (i.get("name") or "").lower() == str(ref).lower()),
                 None)
             if img:
-                await push_library_photo(img["id"], screen=screen_id, duration=duration)
+                await push_library_photo(img["id"], screen=screen_id, duration=duration, sound=snd)
             else:
                 logger.warning(f"MQTT: image '{ref}' not found")
 

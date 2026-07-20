@@ -204,6 +204,7 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "news_sources": "[]",
         "calendar_ical_url": "",
         "sound_enabled": "true",
+        "sound_schedule": "{}",  # {enabled, on_time, off_time, days} — sound plays only in-window
         "flip_duration": "120",
         "divider_width": "4",
         "divider_color": "#111111",
