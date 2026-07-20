@@ -17,6 +17,42 @@ function ConfigField({ fieldKey, schema, value, onChange }) {
     )
   }
 
+  if (schema.type === 'multiselect') {
+    const selected = Array.isArray(value) ? value : (value ?? schema.default ?? [])
+    const toggle = (key) => {
+      const next = selected.includes(key)
+        ? selected.filter(k => k !== key)
+        : [...selected, key]
+      onChange(next)
+    }
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label className="section-label">{schema.label}</label>
+        <div className="flex flex-wrap gap-1.5">
+          {(schema.options || []).map(opt => {
+            const on = selected.includes(opt.value)
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className="text-[11px] px-2.5 py-1 rounded-full transition-all"
+                style={{
+                  background: on ? 'var(--accent-dim)' : 'var(--surface)',
+                  border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border)'}`,
+                  color: on ? 'var(--text-1)' : 'var(--text-3)',
+                }}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+        {schema.help && <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>{schema.help}</p>}
+      </div>
+    )
+  }
+
   if (schema.type === 'textarea') {
     return (
       <div className="flex flex-col gap-1.5">

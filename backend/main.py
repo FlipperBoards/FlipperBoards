@@ -178,8 +178,11 @@ def _register_builtin_modes():
     async def render_sports(rows, cols, config, s):
         from services.sports import get_sports_matrix
         return await get_sports_matrix(rows, cols,
-            league=config.get("league", "nfl"),
-            team=config.get("team", ""),
+            leagues=config.get("leagues"),
+            league=config.get("league", "nfl"),   # legacy single-league fallback
+            status=config.get("status", "all"),
+            teams=config.get("teams"),
+            team=config.get("team", ""),           # legacy single-team fallback
             screen_id=config.get("_screen_id", "main"))
 
     async def render_countdown(rows, cols, config, s):
@@ -255,17 +258,29 @@ def _register_builtin_modes():
     }
     from services.sports import LEAGUES
     _sports_schema = {
-        "league": {
-            "type": "select",
-            "label": "League",
+        "leagues": {
+            "type": "multiselect",
+            "label": "Leagues",
             "options": [{"value": key, "label": label} for key, (_, label) in LEAGUES.items()],
-            "default": "nfl",
+            "default": ["nfl"],
+            "help": "Pick one or several — games from all selected leagues merge into one rotation, tagged by league.",
         },
-        "team": {
+        "status": {
+            "type": "select",
+            "label": "Show",
+            "options": [
+                {"value": "all", "label": "All games"},
+                {"value": "live", "label": "Live now"},
+                {"value": "upcoming", "label": "Upcoming"},
+                {"value": "final", "label": "Final"},
+            ],
+            "default": "all",
+        },
+        "teams": {
             "type": "text",
             "label": "Team Filter",
-            "placeholder": "e.g. KC — abbreviation or name",
-            "help": "Optional. Stay on one team's game (scores update live) instead of rotating through all games.",
+            "placeholder": "e.g. CHIEFS, LAKERS — comma-separated",
+            "help": "Optional. Show only these teams (name or abbreviation), matched across all selected leagues.",
         },
     }
     _drivetime_schema = {

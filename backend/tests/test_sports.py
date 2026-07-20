@@ -1,36 +1,54 @@
-"""Sports mode: ESPN payload parsing, rendering, rotation, and resilience —
-all with a mocked fetch, no network."""
+"""Sports mode: ESPN payload parsing, rendering, multi-league merge, status
+and team filtering, full-name fitting, and resilience — mocked fetch, no
+network."""
 import pytest
 
 from charmap import CHARS
 from services import sports
 
 
+def _team(abbr, short, full):
+    return {"abbreviation": abbr, "shortDisplayName": short, "displayName": full}
+
+
 def _event(home, away, hs, as_, state="in", detail="7:32 - 3rd"):
     return {
         "competitions": [{
             "competitors": [
-                {"homeAway": "home", "score": str(hs),
-                 "team": {"abbreviation": home}},
-                {"homeAway": "away", "score": str(as_),
-                 "team": {"abbreviation": away}},
+                {"homeAway": "home", "score": str(hs), "team": home},
+                {"homeAway": "away", "score": str(as_), "team": away},
             ],
         }],
         "status": {"type": {"state": state, "shortDetail": detail}},
     }
 
 
-FIXTURE = {"events": [
-    _event("KC", "BUF", 21, 17, "in", "7:32 - 3rd"),
-    _event("DAL", "PHI", 0, 0, "pre", "Sun 7:20 PM"),
-    _event("SF", "SEA", 27, 24, "post", "Final"),
+KC = _team("KC", "Chiefs", "Kansas City Chiefs")
+BUF = _team("BUF", "Bills", "Buffalo Bills")
+DAL = _team("DAL", "Cowboys", "Dallas Cowboys")
+PHI = _team("PHI", "Eagles", "Philadelphia Eagles")
+SF = _team("SF", "49ers", "San Francisco 49ers")
+SEA = _team("SEA", "Seahawks", "Seattle Seahawks")
+
+NFL_FIXTURE = {"events": [
+    _event(KC, BUF, 21, 17, "in", "7:32 - 3rd"),
+    _event(DAL, PHI, 0, 0, "pre", "Sun 7:20 PM"),
+    _event(SF, SEA, 27, 24, "post", "Final"),
+]}
+
+LAL = _team("LAL", "Lakers", "Los Angeles Lakers")
+BOS = _team("BOS", "Celtics", "Boston Celtics")
+NBA_FIXTURE = {"events": [
+    _event(LAL, BOS, 88, 90, "in", "4:10 - 4th"),
 ]}
 
 
 @pytest.fixture(autouse=True)
 def _mock_espn(monkeypatch):
     async def fake_fetch(path):
-        return FIXTURE
+        if "basketball/nba" in path:
+            return NBA_FIXTURE
+        return NFL_FIXTURE
     monkeypatch.setattr(sports, "_fetch_raw", fake_fetch)
     sports._cache.clear()
     sports._cursor.clear()
@@ -41,44 +59,135 @@ def _text(matrix):
     return ["".join(CHARS[c] if c < 71 else "#" for c in row).strip() for row in matrix]
 
 
+# ── Parsing / ordering ────────────────────────────────────────────────────────
+
 async def test_parse_orders_live_first():
     games = await sports.get_games("nfl")
     assert [g["state"] for g in games] == ["in", "pre", "post"]
-    assert games[0]["home_name"] == "KC" and games[0]["home_score"] == 21
+    assert games[0]["home_names"]["abbr"] == "KC"
+    assert games[0]["home_names"]["full"] == "Kansas City Chiefs"
+    assert games[0]["home_score"] == 21
 
 
-async def test_team_filter_stays_on_game():
-    m1 = await sports.get_sports_matrix(6, 22, league="nfl", team="KC")
-    m2 = await sports.get_sports_matrix(6, 22, league="nfl", team="KC")
-    assert m1 == m2  # no rotation when filtered to one game
-    rows = _text(m1)
-    assert any("KC" in r and "21" in r for r in rows)
-    assert any("BUF" in r and "17" in r for r in rows)
-    assert any("7:32 3RD" in r for r in rows)  # status line
+# ── Full team names, best-fit by width ────────────────────────────────────────
+
+async def test_full_name_when_it_fits():
+    # 22-wide board fits "BUFFALO BILLS" (13 <= 17 name width) but not
+    # "KANSAS CITY CHIEFS" (18) — that one falls back to "CHIEFS"
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], teams="Chiefs")
+    rows = _text(m)
+    assert any("BUFFALO BILLS" in r for r in rows)
+    assert any("CHIEFS" in r for r in rows)
+    assert not any("KANSAS CITY" in r for r in rows)
 
 
-async def test_rotation_cycles_games():
-    a = await sports.get_sports_matrix(6, 22, league="nfl")
-    b = await sports.get_sports_matrix(6, 22, league="nfl")
-    assert a != b  # advanced to the next game
+async def test_full_name_on_wide_board():
+    # A wider board fits the whole "KANSAS CITY CHIEFS"
+    m = await sports.get_sports_matrix(6, 30, leagues=["nfl"], teams="Chiefs")
+    assert any("KANSAS CITY CHIEFS" in r for r in _text(m))
 
+
+async def test_falls_back_to_short_name_on_narrow_board():
+    # 12-wide can't fit the full name; "CHIEFS" should win over "KC"
+    m = await sports.get_sports_matrix(6, 12, leagues=["nfl"], teams="Chiefs")
+    rows = _text(m)
+    assert any("CHIEFS" in r for r in rows)
+    assert not any("KANSAS CITY" in r for r in rows)
+
+
+# ── Status filter ─────────────────────────────────────────────────────────────
+
+async def test_status_live_only():
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], status="live")
+    rows = _text(m)
+    assert any("CHIEFS" in r for r in rows)  # the only live NFL game
+    # not the upcoming or final games
+    assert not any("COWBOYS" in r for r in rows)
+
+
+async def test_status_upcoming_only():
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], status="upcoming")
+    assert any("COWBOYS" in r for r in _text(m))
+
+
+async def test_status_final_only():
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], status="final")
+    assert any("49ERS" in r or "SAN FRANCISCO" in r for r in _text(m))
+
+
+async def test_status_none_matching_shows_message():
+    m = await sports.get_sports_matrix(6, 22, leagues=["nba"], status="final")
+    assert any("NO FINAL" in r for r in _text(m))
+
+
+# ── Multi-league merge + league tag ───────────────────────────────────────────
+
+async def test_multi_league_merges_and_tags():
+    seen = set()
+    for _ in range(4):
+        m = await sports.get_sports_matrix(6, 22, leagues=["nfl", "nba"],
+                                           status="live", screen_id="multi")
+        rows = _text(m)
+        joined = " ".join(rows)
+        if "LAKERS" in joined:
+            seen.add("nba")
+            assert any("NBA" in r for r in rows)  # tagged status line
+        if "CHIEFS" in joined:
+            seen.add("nfl")
+            assert any("NFL" in r for r in rows)
+    assert seen == {"nfl", "nba"}  # both leagues appeared in the rotation
+
+
+async def test_single_league_has_no_tag():
+    m = await sports.get_sports_matrix(6, 22, leagues=["nba"], status="live")
+    rows = _text(m)
+    # status line is the game clock only, no "NBA" prefix
+    assert any("4:10 4TH" in r for r in rows)
+    assert not any(r.startswith("NBA") for r in rows)
+
+
+# ── Team filter ───────────────────────────────────────────────────────────────
+
+async def test_multi_team_filter_across_leagues():
+    # Chiefs (NFL) + Lakers (NBA), both live — filter keeps only those
+    got = set()
+    for _ in range(4):
+        m = await sports.get_sports_matrix(6, 22, leagues=["nfl", "nba"],
+                                           teams="Chiefs, Lakers", screen_id="mt")
+        joined = " ".join(_text(m))
+        if "CHIEFS" in joined:
+            got.add("kc")
+        if "LAKERS" in joined:
+            got.add("lal")
+        assert "COWBOYS" not in joined  # not in the filter
+    assert got == {"kc", "lal"}
+
+
+async def test_legacy_single_league_and_team():
+    m = await sports.get_sports_matrix(6, 22, league="nfl", team="KC")
+    assert any("CHIEFS" in r for r in _text(m))
+
+
+# ── Live digit isolation ──────────────────────────────────────────────────────
 
 async def test_score_change_flips_one_digit():
-    before = await sports.get_sports_matrix(6, 22, league="nfl", team="KC")
-    FIXTURE["events"][0]["competitions"][0]["competitors"][0]["score"] = "24"
+    before = await sports.get_sports_matrix(6, 22, leagues=["nfl"], teams="Chiefs")
+    NFL_FIXTURE["events"][0]["competitions"][0]["competitors"][0]["score"] = "24"
     sports._cache.clear()
-    after = await sports.get_sports_matrix(6, 22, league="nfl", team="KC")
+    after = await sports.get_sports_matrix(6, 22, leagues=["nfl"], teams="Chiefs")
     diff = [(r, c) for r in range(6) for c in range(22) if before[r][c] != after[r][c]]
     assert diff == [(1, 21)]  # 21 -> 24: only the ones digit changes
-    FIXTURE["events"][0]["competitions"][0]["competitors"][0]["score"] = "21"
+    NFL_FIXTURE["events"][0]["competitions"][0]["competitors"][0]["score"] = "21"
 
+
+# ── Resilience ────────────────────────────────────────────────────────────────
 
 async def test_no_games(monkeypatch):
     async def empty(path):
         return {"events": []}
     monkeypatch.setattr(sports, "_fetch_raw", empty)
     sports._cache.clear()
-    m = await sports.get_sports_matrix(6, 22, league="nba")
+    m = await sports.get_sports_matrix(6, 22, leagues=["nba"])
     assert any("NO NBA GAMES TODAY" in r for r in _text(m))
 
 
@@ -90,7 +199,7 @@ async def test_api_failure_serves_stale_then_empty(monkeypatch):
     monkeypatch.setattr(sports, "_fetch_raw", boom)
     sports._cache["football/nfl"] = (0, sports._cache["football/nfl"][1])  # expire
     games = await sports.get_games("nfl")
-    assert games and games[0]["home_name"] == "KC"  # stale beats blank
+    assert games and games[0]["home_names"]["abbr"] == "KC"  # stale beats blank
 
     sports._cache.clear()
     assert await sports.get_games("nfl") == []
@@ -100,4 +209,6 @@ async def test_mode_registered(client):
     modes = (await client.get("/api/modes/available")).json()
     sports_mode = next((m for m in modes if m["id"] == "sports"), None)
     assert sports_mode is not None
-    assert "league" in sports_mode["config_schema"]
+    assert "leagues" in sports_mode["config_schema"]
+    assert sports_mode["config_schema"]["leagues"]["type"] == "multiselect"
+    assert "status" in sports_mode["config_schema"]

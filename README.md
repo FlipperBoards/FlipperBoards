@@ -201,17 +201,26 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | News | Top headlines — falls back to BBC/Reuters RSS with no API key |
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
 | Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) |
-| Sports | Live game scores (NFL, NBA, MLB, NHL, college, MLS, EPL) — no API key needed |
+| Sports | Live scores across one or many leagues (NFL, NBA, MLB, NHL, college, MLS, EPL) with status filtering and full team names — no API key |
 | Countdown | Days / hours:minutes:seconds to any date (or count up since one) — seconds tick live |
 | Stocks | Stock & crypto prices with % change and green/red direction tiles — no API key needed |
 | Data Feed | Poll any JSON URL and render a template — follower counts, sensors, anything |
 | Drive Times | Live driving times with traffic to up to 6 destinations (Google Maps key) |
 | Text Messages | Custom messages managed in the **Text** tab |
 
-**Sports mode** rotates through the day's games with live scores and game
-clocks. Set a **team filter** in the mode's ⚙ config to stay locked on one
-game — as the score changes, only the digits flip, just like a real stadium
-board. Scores refresh with the rotation interval (60s API cache).
+**Sports mode** rotates through the day's games with live scores, game clocks,
+and full team names (it uses the longest name that fits — `KANSAS CITY CHIEFS`
+on a wide board, `CHIEFS` on a narrow one, `KC` only as a last resort). As a
+score changes, only its digits flip, just like a real stadium board. Scores
+refresh with the rotation interval (60s API cache). Configure in the mode's ⚙:
+
+- **Leagues** — pick one or several (NFL, NBA, MLB, NHL, college football &
+  basketball, MLS, Premier League). Multiple leagues merge into one rotation,
+  each game's status line tagged with its league (`NFL  3RD 7:32`).
+- **Show** — All games, or filter to Live now / Upcoming / Final.
+- **Team filter** — comma-separated names or abbreviations (`CHIEFS, LAKERS`),
+  matched across every selected league. Filter to one game and it stays put so
+  the score digits flip live.
 
 **Countdown mode** counts down to a target date (`2027-01-01 00:00`) with an
 optional label and a custom finish message — or counts up *since* a date.
