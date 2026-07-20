@@ -6,8 +6,8 @@ import pytest
 from charmap import CHARS
 from services import drivetime
 from services.drivetime import (GREEN, RED, YELLOW, entry_row,
-                                get_drivetime_matrix, parse_destinations,
-                                parse_matrix, set_override)
+                                get_drivetime_matrix, make_waypoint,
+                                parse_destinations, parse_matrix, set_override)
 
 ROWS, COLS = 6, 22
 
@@ -48,6 +48,24 @@ def test_parse_destinations_named_and_bare():
 def test_parse_destinations_caps_at_six():
     text = "\n".join(f"D{i} | addr {i}" for i in range(9))
     assert len(parse_destinations(text)) == 6
+
+
+# ── Waypoints: addresses vs coordinates ───────────────────────────────────────
+
+def test_waypoint_coordinates():
+    wp = make_waypoint("45.52, -122.68")
+    assert wp == {"waypoint": {"location": {"latLng": {
+        "latitude": 45.52, "longitude": -122.68}}}}
+    wp = make_waypoint("-33.86,151.21")   # no space, southern hemisphere
+    assert wp["waypoint"]["location"]["latLng"]["latitude"] == -33.86
+
+
+def test_waypoint_address_passthrough():
+    assert make_waypoint("123 Main St, Portland OR") == \
+        {"waypoint": {"address": "123 Main St, Portland OR"}}
+    # Out-of-range numbers are not coordinates — "1234, 5678 Elm St" is an address
+    assert "address" in make_waypoint("91.0, 200.0")["waypoint"]
+    assert "address" in make_waypoint("PDX Airport")["waypoint"]
 
 
 # ── Matrix response parsing + traffic accents ─────────────────────────────────

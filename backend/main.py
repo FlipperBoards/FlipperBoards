@@ -273,13 +273,13 @@ def _register_builtin_modes():
             "type": "text",
             "label": "Origin",
             "placeholder": "123 Main St, Portland OR",
-            "help": "Where drives start from — your bar/home address.",
+            "help": "Where drives start from — an address or coordinates (45.52, -122.68).",
         },
         "destinations": {
             "type": "textarea",
             "label": "Destinations (up to 6, one per line)",
-            "placeholder": "Home | 456 Oak Ave, Portland OR\nAirport | PDX Airport",
-            "help": "Name | address per line. Times refresh every 5 minutes while displayed. Can also be set via MQTT drivetime/set.",
+            "placeholder": "Home | 456 Oak Ave, Portland OR\nAirport | 45.588, -122.593",
+            "help": "Name | address-or-coordinates per line. Times refresh every 5 minutes while displayed. Can also be set via MQTT drivetime/set.",
         },
     }
     _stocks_schema = {

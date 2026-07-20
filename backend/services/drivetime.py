@@ -18,6 +18,7 @@ many screens display it. Google bills the Route Matrix per element
 (origins × destinations), so fewer destinations = cheaper.
 """
 import json
+import re
 import time
 
 import httpx
@@ -86,10 +87,25 @@ def get_override(screen_id: str):
     return _override.get(screen_id)
 
 
+_COORD_RE = re.compile(r"^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$")
+
+
+def make_waypoint(place: str) -> dict:
+    """Origin/destination string → Routes API waypoint. `45.52, -122.68`
+    becomes a latLng waypoint; anything else is sent as an address."""
+    m = _COORD_RE.match(place)
+    if m:
+        lat, lng = float(m.group(1)), float(m.group(2))
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            return {"waypoint": {"location": {"latLng": {
+                "latitude": lat, "longitude": lng}}}}
+    return {"waypoint": {"address": place}}
+
+
 async def _fetch_matrix(api_key: str, origin: str, dests: list[str]) -> list[dict]:
     body = {
-        "origins": [{"waypoint": {"address": origin}}],
-        "destinations": [{"waypoint": {"address": d}} for d in dests],
+        "origins": [make_waypoint(origin)],
+        "destinations": [make_waypoint(d) for d in dests],
         "travelMode": "DRIVE",
         "routingPreference": "TRAFFIC_AWARE",
     }
