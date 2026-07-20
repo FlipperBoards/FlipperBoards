@@ -162,7 +162,8 @@ def _register_builtin_modes():
             keyword=config.get("keyword", ""),
             include_domains=config.get("include_domains", ""),
             exclude_domains=config.get("exclude_domains", ""),
-            topic=config.get("topic", "TOP"),
+            topics=config.get("topics"),
+            topic=config.get("topic", ""),   # legacy single-topic fallback
             when=config.get("when", ""),
             language=config.get("language", "en") or "en",
             country=config.get("country", "US") or "US",
@@ -232,21 +233,9 @@ def _register_builtin_modes():
             "placeholder": "e.g. Phoenix Suns",
             "help": "Google News search. Supports operators like intitle:, \"exact phrase\", OR. Leave blank to browse a topic.",
         },
-        "include_domains": {
-            "type": "text",
-            "label": "Only these sources",
-            "placeholder": "espn.com, apnews.com",
-            "help": "Comma-separated domains — headlines come only from these.",
-        },
-        "exclude_domains": {
-            "type": "text",
-            "label": "Never these sources",
-            "placeholder": "example.com",
-            "help": "Comma-separated domains to filter out.",
-        },
-        "topic": {
-            "type": "select",
-            "label": "Topic",
+        "topics": {
+            "type": "multiselect",
+            "label": "Topics",
             "options": [
                 {"value": "TOP", "label": "Top Stories"},
                 {"value": "WORLD", "label": "World"},
@@ -258,12 +247,24 @@ def _register_builtin_modes():
                 {"value": "SCIENCE", "label": "Science"},
                 {"value": "HEALTH", "label": "Health"},
             ],
-            "default": "TOP",
-            "help": "Used only when Keyword and source filters are blank.",
+            "default": ["TOP"],
+            "help": "Pick one or several — used alongside the keyword. Source and recency filters apply here too.",
+        },
+        "include_domains": {
+            "type": "text",
+            "label": "Only these sources",
+            "placeholder": "espn.com, apnews.com",
+            "help": "Comma-separated domains — applies to keyword and topics.",
+        },
+        "exclude_domains": {
+            "type": "text",
+            "label": "Never these sources",
+            "placeholder": "example.com",
+            "help": "Comma-separated domains to filter out of keyword and topics.",
         },
         "when": {
             "type": "select",
-            "label": "Recency (search only)",
+            "label": "Recency",
             "options": [
                 {"value": "", "label": "Any time"},
                 {"value": "1h", "label": "Past hour"},
@@ -271,6 +272,7 @@ def _register_builtin_modes():
                 {"value": "7d", "label": "Past week"},
             ],
             "default": "",
+            "help": "Applies to keyword and topics.",
         },
         "language": {"type": "text", "label": "Language", "placeholder": "en", "help": "ISO 639-1 code."},
         "country": {"type": "text", "label": "Country", "placeholder": "US", "help": "ISO 3166-1 code."},

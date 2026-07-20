@@ -232,17 +232,22 @@ the mode's ⚙ config:
 
 - **Keyword** — free-text search (`Phoenix Suns`); supports Google operators
   like `intitle:`, `"exact phrase"`, `OR`
+- **Topics** — pick one or several (Top Stories, World, Nation, Business,
+  Technology, Entertainment, Sports, Science, Health); they merge with the
+  keyword into one rotation
 - **Only these sources / Never these sources** — comma-separated domains
-  (`espn.com, apnews.com`) become `site:` / `-site:` filters
-- **Topic** — Top Stories, World, Nation, Business, Technology, Entertainment,
-  Sports, Science, Health (used when keyword and source filters are blank)
-- **Recency** — limit searches to the past hour / 24 hours / week
+  (`espn.com, apnews.com`) that filter **both** the keyword search and topics
+- **Recency** — past hour / 24 hours / week, applied to keyword **and** topics
 - **Language / Country** — ISO codes for locale (`en` / `US`)
 
-Different screens can run different searches — one board on `Phoenix Suns` from
-`espn.com`, another on Top Business stories. Headlines cache for 5 minutes and
-rotate one at a time. It's built on Google News RSS directly (the same feeds
-the `google-news-api` project wraps), so there's nothing to install and no key.
+Source and recency filters apply uniformly: Google News' `site:`/`when:`
+operators only work on keyword searches, so for topic sections FlipperBoards
+reads each item's source domain and publish time from the feed and filters them
+the same way. Different screens can run different feeds — one board on
+`Phoenix Suns` from `espn.com`, another on Business + Technology from the past
+day. Headlines cache for 5 minutes and rotate one at a time. It's built on
+Google News RSS directly (the same feeds the `google-news-api` project wraps),
+so there's nothing to install and no key.
 
 **Sports mode** rotates through the day's games with live scores, game clocks,
 and full team names (it uses the longest name that fits — `KANSAS CITY CHIEFS`
