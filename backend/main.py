@@ -114,6 +114,7 @@ class ScreenState:
         self.playlist_items: list[dict] = []
         self.playlist_pos: int = 0
         self.mode: str = "clock"
+        self.mode_config: dict = {}  # config used for the current render (per-item or screen)
         self.mode_idx: int = 0
         self.rotation_task: asyncio.Task | None = None
         self.push_timer: asyncio.Task | None = None
@@ -435,9 +436,15 @@ async def _render_playlist_item(state: ScreenState, transition: str | None = Non
         mode = content.get("mode", "clock")
         state.mode = mode
         db_settings = await _effective_settings()
-        mode_entries = await database.get_modes(state.screen_id)
-        mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
-        mode_config = mode_entry.get("config", {}) if mode_entry else {}
+        # Per-item config wins; fall back to the screen's mode config for
+        # items created before per-item config existed.
+        if "config" in content:
+            mode_config = content.get("config") or {}
+        else:
+            mode_entries = await database.get_modes(state.screen_id)
+            mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
+            mode_config = mode_entry.get("config", {}) if mode_entry else {}
+        state.mode_config = mode_config
         state.matrix = await _render_mode(mode, state.rows, state.cols, db_settings,
                                           screen_id=state.screen_id, mode_config=mode_config)
 
@@ -528,13 +535,14 @@ async def advance_screen_mode(screen_id: str):
     mode_entry = enabled[state.mode_idx]
     mode_name = mode_entry["mode"]
     state.mode = mode_name
+    state.mode_config = mode_entry.get("config", {})
     state.color_matrix = None
     state.text_colors = None
     state.photo_url = None
 
     state.matrix = await _render_mode(
         mode_name, state.rows, state.cols, db_settings,
-        screen_id=screen_id, mode_config=mode_entry.get("config", {}),
+        screen_id=screen_id, mode_config=state.mode_config,
     )
     await _broadcast_screen(state, transition="sweep" if len(enabled) > 1 else None)
 
@@ -826,12 +834,12 @@ async def _clock_tick_loop():
                     state.photo_url = None
                     await _broadcast_screen(state)
                 elif state.mode == "countdown":
-                    # Re-render each second so the seconds digits flip live
-                    mode_entries = await database.get_modes(sid)
-                    entry = next((m for m in mode_entries if m["mode"] == "countdown"), None)
+                    # Re-render each second so the seconds digits flip live,
+                    # using the config for whatever is on screen (a playlist
+                    # item's own config, or the screen's countdown config)
                     state.matrix = await _render_mode(
                         "countdown", state.rows, state.cols, db_settings,
-                        screen_id=sid, mode_config=entry.get("config", {}) if entry else {})
+                        screen_id=sid, mode_config=state.mode_config)
                     state.color_matrix = None
                     state.photo_url = None
                     await _broadcast_screen(state)
@@ -846,11 +854,9 @@ async def _clock_tick_loop():
                         continue
                     if now_mono - _drivetime_refreshed[sid] >= DRIVETIME_REFRESH_SECONDS:
                         _drivetime_refreshed[sid] = now_mono
-                        mode_entries = await database.get_modes(sid)
-                        entry = next((m for m in mode_entries if m["mode"] == "drivetime"), None)
                         state.matrix = await _render_mode(
                             "drivetime", state.rows, state.cols, db_settings,
-                            screen_id=sid, mode_config=entry.get("config", {}) if entry else {})
+                            screen_id=sid, mode_config=state.mode_config)
                         state.color_matrix = None
                         state.photo_url = None
                         await _broadcast_screen(state)
@@ -1592,6 +1598,7 @@ async def push_mode(content: ModeContent, screen: str = Query(default="main")):
     mode_entry = next((m for m in mode_entries if m["mode"] == mode), None)
     mode_config = mode_entry.get("config", {}) if mode_entry else {}
     state.mode = mode
+    state.mode_config = mode_config
     state.color_matrix = None
     state.text_colors = None
     state.photo_url = None

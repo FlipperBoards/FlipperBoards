@@ -1,6 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { apiFetch, apiJson } from '../../utils/api'
 import { useToast } from '../Toast'
+import ConfigField from './ConfigField'
+
+/** One-line summary of a mode item's config for the row label. */
+function configSummary(config) {
+  if (!config) return ''
+  const parts = []
+  for (const v of Object.values(config)) {
+    if (Array.isArray(v) && v.length) parts.push(v.join(','))
+    else if (typeof v === 'string' && v.trim()) parts.push(v.trim())
+    if (parts.length >= 2) break
+  }
+  const s = parts.join(' · ')
+  return s.length > 28 ? s.slice(0, 28) + '…' : s
+}
 
 const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']  // Monday-first
 const DEFAULT_WINDOW = { enabled: false, start_time: '11:00', end_time: '22:00', days: [0, 1, 2, 3, 4, 5, 6] }
@@ -62,6 +76,9 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
   const [showAdd, setShowAdd] = useState(false)
   const [addType, setAddType] = useState('mode')
   const [addMode, setAddMode] = useState('clock')
+  const [addConfig, setAddConfig] = useState({})      // per-item mode config draft (new item)
+  const [editingConfig, setEditingConfig] = useState(null)  // item id with config editor open
+  const [configDraft, setConfigDraft] = useState({})  // config draft for the item being edited
   const [addText, setAddText] = useState('')
   const [addPhoto, setAddPhoto] = useState(null)
   const [addHomeName, setAddHomeName] = useState('')
@@ -99,7 +116,9 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
       const c = item.content ?? {}
       return `${c.title || 'Menu'} (${(c.entries || []).length} items)`
     }
-    return modeById[item.content?.mode]?.label ?? item.content?.mode ?? 'Mode'
+    const label = modeById[item.content?.mode]?.label ?? item.content?.mode ?? 'Mode'
+    const summary = configSummary(item.content?.config)
+    return summary ? `${label} · ${summary}` : label
   }
 
   const qs = `?screen=${encodeURIComponent(screenId)}`
@@ -143,13 +162,14 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           entries: addMenuEntries.filter(e => e.name.trim() || e.price.trim()),
         }
       } else {
-        content = { mode: addMode }
+        content = { mode: addMode, config: addConfig }
       }
       await apiJson(`/api/playlist${qs}`, 'POST',
                     { type: addType, content, duration: addDuration, window: addWindow })
       await load()
       setShowAdd(false)
       setAddText('')
+      setAddConfig({})
       setAddPhoto(null)
       setAddHomeName('')
       setAddAwayName('')
@@ -275,6 +295,18 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
     await load()
   }
 
+  const saveConfig = async (item, config) => {
+    try {
+      await apiJson(`/api/playlist/${item.id}${qs}`, 'PUT',
+                    { type: item.type, content: { ...item.content, config },
+                      duration: item.duration, window: item.window })
+    } catch (err) {
+      showToast(`Config update failed: ${err.message}`)
+    }
+    setEditingConfig(null)
+    await load()
+  }
+
   const saveDuration = async (item, newDuration) => {
     const dur = Math.max(5, parseInt(newDuration, 10) || 30)
     try {
@@ -383,6 +415,21 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
                 )}
               </div>
 
+              {/* Per-item mode config (only when the mode has settings) */}
+              {item.type === 'mode' && Object.keys(modeById[item.content?.mode]?.config_schema || {}).length > 0 && (
+                <button
+                  onClick={() => {
+                    setConfigDraft({ ...(item.content?.config || {}) })
+                    setEditingConfig(editingConfig === item.id ? null : item.id)
+                  }}
+                  className="w-5 h-5 flex items-center justify-center text-xs flex-shrink-0 transition-colors"
+                  style={{ color: configSummary(item.content?.config) ? 'var(--accent)' : 'var(--text-3)' }}
+                  title="Configure this item"
+                >
+                  ⚙
+                </button>
+              )}
+
               {/* Time window */}
               <button
                 onClick={() => setEditingWindow(editingWindow === item.id ? null : item.id)}
@@ -437,6 +484,35 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
         </div>
       )}
 
+      {/* Per-item mode config editor (below the list) */}
+      {editingConfig !== null && (() => {
+        const item = items.find(i => i.id === editingConfig)
+        const schema = item && modeById[item.content?.mode]?.config_schema
+        if (!item || !schema) return null
+        return (
+          <div className="rounded-xl p-3 space-y-3"
+            style={{ background: 'rgba(234,179,8,0.05)', border: '1px solid rgba(234,179,8,0.25)' }}>
+            <p className="section-label" style={{ color: '#eab308' }}>
+              {modeById[item.content?.mode]?.label} settings — {itemLabel(item)}
+            </p>
+            {Object.entries(schema).map(([key, s]) => (
+              <ConfigField key={key} schema={s} value={configDraft[key]}
+                onChange={val => setConfigDraft(prev => ({ ...prev, [key]: val }))} />
+            ))}
+            <div className="flex gap-2">
+              <button onClick={() => saveConfig(item, configDraft)}
+                className="fb-btn-primary flex-1 py-1.5 text-[11px]"
+                style={{ background: '#854d0e', borderColor: 'rgba(234,179,8,0.3)' }}>
+                Save
+              </button>
+              <button onClick={() => setEditingConfig(null)} className="fb-btn-ghost px-4 py-1.5 text-[11px]">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Per-item window editor (below the list to avoid drag interference) */}
       {editingWindow !== null && (() => {
         const item = items.find(i => i.id === editingWindow)
@@ -487,18 +563,33 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           </div>
 
           {addType === 'mode' && (
-            <div className="grid grid-cols-2 gap-1.5">
-              {availableModes.map(m => (
-                <button key={m.id} onClick={() => setAddMode(m.id)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors"
-                  style={addMode === m.id
-                    ? { background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', color: 'var(--text-1)' }
-                    : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>
-                  <span>{m.icon}</span>
-                  <span className="font-mono text-xs">{m.label}</span>
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-1.5">
+                {availableModes.map(m => (
+                  <button key={m.id} onClick={() => { setAddMode(m.id); setAddConfig({}) }}
+                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors"
+                    style={addMode === m.id
+                      ? { background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', color: 'var(--text-1)' }
+                      : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>
+                    <span>{m.icon}</span>
+                    <span className="font-mono text-xs">{m.label}</span>
+                  </button>
+                ))}
+              </div>
+              {/* Per-item config for the selected mode */}
+              {Object.keys(modeById[addMode]?.config_schema || {}).length > 0 && (
+                <div className="rounded-lg p-3 space-y-3 mt-1"
+                  style={{ background: 'rgba(234,179,8,0.05)', border: '1px solid rgba(234,179,8,0.25)' }}>
+                  <p className="section-label" style={{ color: '#eab308' }}>
+                    {modeById[addMode].label} settings for this item
+                  </p>
+                  {Object.entries(modeById[addMode].config_schema).map(([key, schema]) => (
+                    <ConfigField key={key} schema={schema} value={addConfig[key]}
+                      onChange={val => setAddConfig(prev => ({ ...prev, [key]: val }))} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {addType === 'text' && (
