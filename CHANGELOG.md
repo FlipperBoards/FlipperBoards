@@ -38,6 +38,14 @@ All notable changes to FlipperBoards are documented here.
 - Flip sound synthesis reuses a shared noise buffer; the canvas engine plays
   one clack per frame scaled by how many flaps landed
 
+### Changed
+- News mode now uses Google News (no API key) with per-screen filtering —
+  keyword search (with operators), include/exclude source domains, topic
+  section, recency, and locale — replacing the NewsAPI-key/RSS setup. Built on
+  Google News RSS directly (same feeds the google-news-api project wraps), so
+  no extra dependency. The old `news_api_key`/`news_categories`/`news_sources`
+  global settings are gone; news is configured per screen in the mode's ⚙
+
 ### Added
 - Sound scheduling: restrict flip sounds to set hours/days (Config → Sound),
   evaluated server-side in the configured timezone. Individual pushes can

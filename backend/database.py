@@ -199,9 +199,6 @@ async def _seed_defaults(db: aiosqlite.Connection):
         "weather_units": "imperial",
         "weather_api_key": "",
         "google_maps_api_key": "",
-        "news_api_key": "",
-        "news_categories": '["technology","general"]',
-        "news_sources": "[]",
         "calendar_ical_url": "",
         "sound_enabled": "true",
         "sound_schedule": "{}",  # {enabled, on_time, off_time, days} — sound plays only in-window

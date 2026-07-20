@@ -235,7 +235,6 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         weather_units:     s.weather_units     || 'imperial',
         weather_api_key:   s.weather_api_key   || '',
         google_maps_api_key: s.google_maps_api_key || '',
-        news_api_key:      s.news_api_key      || '',
         calendar_ical_url: s.calendar_ical_url || '',
         sound_enabled:     s.sound_enabled !== 'false',
         sound_schedule:    parseSchedule(s.sound_schedule),
@@ -389,14 +388,6 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
           Origin and destinations are set per screen in the Drive Times mode ⚙ config.
           Times refresh every 5 minutes while displayed.
         </p>
-      </Section>
-
-      {/* News */}
-      <Section title="News">
-        <Field label="NewsAPI Key">
-          <input type="password" placeholder="Optional — falls back to RSS" value={s.news_api_key || ''}
-            onChange={e => set('news_api_key', e.target.value)} className="fb-input" />
-        </Field>
       </Section>
 
       {/* Calendar */}
