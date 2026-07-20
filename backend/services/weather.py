@@ -1,9 +1,12 @@
 import httpx
 from charmap import text_to_row, blank_matrix
 
-OWM_BASE = "https://api.openweathermap.org/data/2.5"
+PIRATE_BASE = "https://api.pirateweather.net/forecast"
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 METEO_URL = "https://api.open-meteo.com/v1/forecast"
+
+# location string → (lat, lon, city, country) — geocoding results are stable
+_geo_cache: dict[str, tuple] = {}
 
 WMO_CODES = {
     0: "CLEAR SKY", 1: "MAINLY CLEAR", 2: "PARTLY CLOUDY", 3: "OVERCAST",
@@ -24,9 +27,9 @@ async def get_weather_matrix(rows: int, cols: int, api_key: str = "",
 
     unit_sym = "F" if units == "imperial" else "C"
 
-    # Try OpenWeatherMap if key is provided
+    # Try Pirate Weather if a key is provided (pirateweather.net — free tier)
     if api_key:
-        result = await _owm(rows, cols, api_key, location, units, unit_sym)
+        result = await _pirate(rows, cols, api_key, location, units, unit_sym)
         if result:
             return result
 
@@ -34,26 +37,60 @@ async def get_weather_matrix(rows: int, cols: int, api_key: str = "",
     return await _open_meteo(rows, cols, location, units, unit_sym)
 
 
-async def _owm(rows, cols, api_key, location, units, unit_sym):
+async def _geocode(client, location):
+    """Location name → (lat, lon, city, country) via Open-Meteo's geocoder."""
+    cached = _geo_cache.get(location)
+    if cached:
+        return cached
+    resp = await client.get(GEOCODING_URL,
+                            params={"name": location, "count": 1, "language": "en"})
+    resp.raise_for_status()
+    results = resp.json().get("results", [])
+    if not results:
+        return None
+    place = results[0]
+    entry = (place["latitude"], place["longitude"],
+             place.get("name", location).upper(),
+             place.get("country_code", "").upper())
+    _geo_cache[location] = entry
+    return entry
+
+
+def parse_pirate(data: dict) -> dict | None:
+    """Pirate Weather (Dark Sky format) payload → display fields."""
+    try:
+        cur = data["currently"]
+        temp = round(cur["temperature"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    daily = (data.get("daily", {}).get("data") or [{}])[0]
+    return {
+        "temp": temp,
+        "feels": round(cur.get("apparentTemperature", temp)),
+        "humidity": round(float(cur.get("humidity", 0)) * 100),
+        "desc": str(cur.get("summary", "")).upper(),
+        "high": round(daily.get("temperatureHigh", temp)),
+        "low": round(daily.get("temperatureLow", temp)),
+    }
+
+
+async def _pirate(rows, cols, api_key, location, units, unit_sym):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
+            geo = await _geocode(client, location)
+            if not geo:
+                return _error_matrix(rows, cols, f"LOCATION NOT FOUND: {location.upper()}")
+            lat, lon, city, country = geo
             resp = await client.get(
-                f"{OWM_BASE}/weather",
-                params={"q": location, "appid": api_key, "units": units}
-            )
+                f"{PIRATE_BASE}/{api_key}/{lat},{lon}",
+                params={"units": "us" if units == "imperial" else "si",
+                        "exclude": "minutely,hourly,alerts"})
             resp.raise_for_status()
-            data = resp.json()
-
-        city = data.get("name", location).upper()
-        country = data.get("sys", {}).get("country", "").upper()
-        temp = round(data.get("main", {}).get("temp", 0))
-        feels = round(data.get("main", {}).get("feels_like", 0))
-        high = round(data.get("main", {}).get("temp_max", 0))
-        low = round(data.get("main", {}).get("temp_min", 0))
-        humidity = data.get("main", {}).get("humidity", 0)
-        desc = data.get("weather", [{}])[0].get("description", "").upper()
-
-        return _build_matrix(rows, cols, city, country, temp, feels, high, low, humidity, desc, unit_sym)
+            w = parse_pirate(resp.json())
+        if not w:
+            return None
+        return _build_matrix(rows, cols, city, country, w["temp"], w["feels"],
+                             w["high"], w["low"], w["humidity"], w["desc"], unit_sym)
     except Exception:
         return None
 

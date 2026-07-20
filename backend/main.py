@@ -191,6 +191,14 @@ def _register_builtin_modes():
             count_up=config.get("count_up", "no") == "yes",
             timezone=s.get("timezone", "UTC"))
 
+    async def render_drivetime(rows, cols, config, s):
+        from services.drivetime import get_drivetime_matrix
+        return await get_drivetime_matrix(rows, cols,
+            api_key=s.get("google_maps_api_key", ""),
+            origin=config.get("origin", ""),
+            destinations=config.get("destinations", ""),
+            screen_id=config.get("_screen_id", "main"))
+
     async def render_stocks(rows, cols, config, s):
         from services.ticker import get_stocks_matrix
         return await get_stocks_matrix(rows, cols,
@@ -260,6 +268,20 @@ def _register_builtin_modes():
             "help": "Optional. Stay on one team's game (scores update live) instead of rotating through all games.",
         },
     }
+    _drivetime_schema = {
+        "origin": {
+            "type": "text",
+            "label": "Origin",
+            "placeholder": "123 Main St, Portland OR",
+            "help": "Where drives start from — your bar/home address.",
+        },
+        "destinations": {
+            "type": "textarea",
+            "label": "Destinations (up to 6, one per line)",
+            "placeholder": "Home | 456 Oak Ave, Portland OR\nAirport | PDX Airport",
+            "help": "Name | address per line. Times refresh every 5 minutes while displayed. Can also be set via MQTT drivetime/set.",
+        },
+    }
     _stocks_schema = {
         "symbols": {
             "type": "text",
@@ -295,6 +317,7 @@ def _register_builtin_modes():
         ModeDefinition("calendar", "Calendar",      "📅", "Upcoming events",         render=render_calendar),
         ModeDefinition("sports",   "Sports",        "🏆", "Live game scores",        config_schema=_sports_schema, render=render_sports),
         ModeDefinition("countdown", "Countdown",     "⏳", "Count down to a date",    config_schema=_countdown_schema, render=render_countdown),
+        ModeDefinition("drivetime", "Drive Times",   "🚗", "Live driving times",      config_schema=_drivetime_schema, render=render_drivetime),
         ModeDefinition("stocks",   "Stocks",        "📈", "Stock & crypto prices",   config_schema=_stocks_schema, render=render_stocks),
         ModeDefinition("data",     "Data Feed",     "🔌", "Poll any JSON URL",       config_schema=_data_schema, render=render_data),
         ModeDefinition("text",     "Text Messages", "✏️", "Custom messages",         config_schema=_text_schema, render=None),
@@ -670,13 +693,20 @@ async def _rotation_loop(screen_id: str):
             await asyncio.sleep(5)
 
 
+_drivetime_refreshed: dict[str, float] = {}   # screen_id → monotonic of last re-render
+DRIVETIME_REFRESH_SECONDS = 300
+
+
 async def _clock_tick_loop():
-    """Global 1-second tick — live-updates clock and countdown screens."""
+    """Global 1-second tick — live-updates clock, countdown, and (every 5
+    minutes) drive-time screens."""
     while True:
         try:
             await asyncio.sleep(1)
             db_settings = await _effective_settings()
             for sid, state in list(_screens.items()):
+                if state.mode != "drivetime":
+                    _drivetime_refreshed.pop(sid, None)
                 if state.mode == "clock":
                     from services.clock import get_clock_matrix
                     state.matrix = get_clock_matrix(
@@ -698,6 +728,25 @@ async def _clock_tick_loop():
                     state.color_matrix = None
                     state.photo_url = None
                     await _broadcast_screen(state)
+                elif state.mode == "drivetime":
+                    # A screen parked on drive times refreshes every 5 minutes;
+                    # only the changed digits flip. Fetches happen ONLY while
+                    # the mode is actually displayed (cost control).
+                    now_mono = asyncio.get_event_loop().time()
+                    if sid not in _drivetime_refreshed:
+                        # Mode just appeared — it rendered fresh moments ago
+                        _drivetime_refreshed[sid] = now_mono
+                        continue
+                    if now_mono - _drivetime_refreshed[sid] >= DRIVETIME_REFRESH_SECONDS:
+                        _drivetime_refreshed[sid] = now_mono
+                        mode_entries = await database.get_modes(sid)
+                        entry = next((m for m in mode_entries if m["mode"] == "drivetime"), None)
+                        state.matrix = await _render_mode(
+                            "drivetime", state.rows, state.cols, db_settings,
+                            screen_id=sid, mode_config=entry.get("config", {}) if entry else {})
+                        state.color_matrix = None
+                        state.photo_url = None
+                        await _broadcast_screen(state)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -949,6 +998,7 @@ class SettingsUpdate(BaseModel):
     weather_location: str | None = None
     weather_units: str | None = None
     weather_api_key: str | None = None
+    google_maps_api_key: str | None = None
     news_api_key: str | None = None
     news_categories: list[str] | None = None
     news_sources: list[str] | None = None
@@ -1881,6 +1931,32 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
 
         elif command == "mode":
             await push_mode(ModeContent(mode=payload), screen=screen_id)
+
+        elif command == "drivetime":
+            # Payload: JSON list of {"name","dest"} (computed via Google) or
+            # {"name","minutes","traffic"?} (ready-made, e.g. from HA/Waze).
+            # Empty payload / "clear" / [] returns to the configured list.
+            from services import drivetime as drivetime_service
+            if payload.strip().lower() in ("", "clear", "null", "[]"):
+                items = None
+            else:
+                try:
+                    parsed = json.loads(payload)
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning("MQTT: drivetime payload is not JSON")
+                    return
+                items = parsed.get("destinations") if isinstance(parsed, dict) else parsed
+            if not drivetime_service.set_override(screen_id, items) and items is not None:
+                logger.warning("MQTT: drivetime payload had no usable entries")
+                return
+            if state.mode == "drivetime":
+                db_settings = await _effective_settings()
+                mode_entries = await database.get_modes(screen_id)
+                entry = next((m for m in mode_entries if m["mode"] == "drivetime"), None)
+                state.matrix = await _render_mode(
+                    "drivetime", state.rows, state.cols, db_settings,
+                    screen_id=screen_id, mode_config=entry.get("config", {}) if entry else {})
+                await _broadcast_screen(state)
 
         elif command == "blank":
             await blank_display(screen=screen_id)

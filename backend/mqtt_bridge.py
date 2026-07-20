@@ -12,6 +12,9 @@ Topic contract (base topic configurable, default "flipperboards"):
     {base}/<screen>/blank/set                any payload
     {base}/<screen>/playlist/set             "next" | "play" | item index
     {base}/<screen>/scoreboard/set           {"home_score":3,...} (first scoreboard item)
+    {base}/<screen>/drivetime/set            [{"name":"HOME","dest":"123 Main St"}] or
+                                             [{"name":"HOME","minutes":23,"traffic":"heavy"}];
+                                             empty/"clear" returns to configured list
     {base}/<screen>/scoreboard/<item_id>/set same, targeting a specific playlist item
 
   State (published, retained):

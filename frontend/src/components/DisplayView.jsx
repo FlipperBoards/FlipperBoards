@@ -105,6 +105,7 @@ export default function DisplayView() {
     image_push: 'IMAGE', photo_push: 'PHOTO', photo_playlist: 'PLAYLIST',
     scoreboard: 'SCOREBOARD', sleep: 'SLEEPING', sports: 'SPORTS',
     countdown: 'COUNTDOWN', menu: 'MENU', stocks: 'STOCKS', data: 'DATA',
+    drivetime: 'DRIVE TIMES',
   }
 
   return (

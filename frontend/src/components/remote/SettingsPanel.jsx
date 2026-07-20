@@ -146,6 +146,7 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         weather_location:  s.weather_location  || '',
         weather_units:     s.weather_units     || 'imperial',
         weather_api_key:   s.weather_api_key   || '',
+        google_maps_api_key: s.google_maps_api_key || '',
         news_api_key:      s.news_api_key      || '',
         calendar_ical_url: s.calendar_ical_url || '',
         sound_enabled:     s.sound_enabled !== 'false',
@@ -265,13 +266,14 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
       </Section>
 
       {/* Weather */}
-      <Section title="Weather — OpenWeatherMap">
+      <Section title="Weather — Pirate Weather">
         <Field label="Location (City, Country)">
           <input type="text" placeholder="Portland,US" value={s.weather_location || ''}
             onChange={e => set('weather_location', e.target.value)} className="fb-input" />
         </Field>
         <Field label="API Key">
-          <input type="password" placeholder="OpenWeatherMap key" value={s.weather_api_key || ''}
+          <input type="password" placeholder="pirateweather.net key — optional, falls back to Open-Meteo"
+            value={s.weather_api_key || ''}
             onChange={e => set('weather_api_key', e.target.value)} className="fb-input" />
         </Field>
         <Field label="Units">
@@ -280,6 +282,19 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
             <option value="metric">Metric (°C)</option>
           </select>
         </Field>
+      </Section>
+
+      {/* Drive times */}
+      <Section title="Drive Times — Google Maps">
+        <Field label="Google Maps API Key">
+          <input type="password" placeholder="Routes API enabled — key from console.cloud.google.com"
+            value={s.google_maps_api_key || ''}
+            onChange={e => set('google_maps_api_key', e.target.value)} className="fb-input" />
+        </Field>
+        <p className="text-[11px] font-mono" style={{ color: 'var(--text-3)' }}>
+          Origin and destinations are set per screen in the Drive Times mode ⚙ config.
+          Times refresh every 5 minutes while displayed.
+        </p>
       </Section>
 
       {/* News */}

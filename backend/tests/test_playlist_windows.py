@@ -35,10 +35,17 @@ def test_overnight_item_window():
     assert not main._item_eligible(late, _dt(5, 3))
 
 
-async def test_windowed_item_skipped_in_rotation(clean_playlist):
+async def test_windowed_item_skipped_in_rotation(clean_playlist, monkeypatch):
     client = clean_playlist
-    # One always-on item, one that can never show (1-minute window at 03:00
-    # would be flaky — use days=[] equivalent via impossible same-minute window)
+    # Freeze "now" at noon so the 03:00-03:01 window is deterministically
+    # outside — days=[] is NOT impossible (empty coerces to every day)
+    import main
+    frozen = datetime(2026, 7, 21, 12, 0, 0)   # a Tuesday, 12:00
+
+    async def _fixed_now():
+        return frozen
+    monkeypatch.setattr(main, "_now_local", _fixed_now)
+
     r = await client.post("/api/playlist?screen=main",
                           json={"type": "text", "content": {"text": "ALWAYS"}, "duration": 60})
     assert r.status_code in (200, 201)
@@ -56,8 +63,15 @@ async def test_windowed_item_skipped_in_rotation(clean_playlist):
         assert s["playlist_pos"] == 0
 
 
-async def test_all_items_windowed_out_falls_back_to_clock(clean_playlist):
+async def test_all_items_windowed_out_falls_back_to_clock(clean_playlist, monkeypatch):
     client = clean_playlist
+    import main
+    frozen = datetime(2026, 7, 21, 12, 0, 0)
+
+    async def _fixed_now():
+        return frozen
+    monkeypatch.setattr(main, "_now_local", _fixed_now)
+
     r = await client.post("/api/playlist?screen=main",
                           json={"type": "text", "content": {"text": "GHOST"}, "duration": 60,
                                 "window": {"enabled": True, "start_time": "03:00",
