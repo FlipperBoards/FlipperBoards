@@ -35,8 +35,8 @@ def test_garbage_returns_none():
 
 # ── Compact time ──────────────────────────────────────────────────────────────
 
-def _at(hour, minute=0):
-    return pytz.utc.localize(datetime(2026, 7, 20, hour, minute))
+def _at(hour, minute=0, second=0):
+    return pytz.utc.localize(datetime(2026, 7, 20, hour, minute, second))
 
 
 def test_compact_time_on_the_hour():
@@ -60,11 +60,13 @@ def _text(matrix):
     return ["".join(CHARS[c] if c < 71 else "#" for c in row).rstrip() for row in matrix]
 
 
-async def _render(monkeypatch, events, rows=6, cols=22):
+async def _render(monkeypatch, events, rows=6, cols=22, now=None):
+    if now is None:
+        now = _at(0, 0)  # midnight — every 7/20+ event is hours away (absolute time)
     async def fake_fetch(url, tz):
         return events
     monkeypatch.setattr(calendar_svc, "_fetch_events", fake_fetch)
-    return _text(await get_calendar_matrix(rows, cols, ical_url="x"))
+    return _text(await get_calendar_matrix(rows, cols, ical_url="x", now=now))
 
 
 async def test_short_date_and_maximized_title(monkeypatch):
@@ -101,6 +103,26 @@ async def test_all_day_event_shows_no_time(monkeypatch):
     assert line.startswith("7/20 COMPANY HOLIDAY")
     assert "12A" not in line          # not rendered as midnight
     assert not line.rstrip().endswith("A") and not line.rstrip().endswith("P")
+
+
+async def test_relative_time_under_an_hour(monkeypatch):
+    events = [{"start": _at(19, 0), "title": "Standup", "all_day": False}]
+    line = (await _render(monkeypatch, events, now=_at(18, 45)))[1]  # 15 min away
+    assert line.rstrip().endswith("15MIN")
+    assert "7P" not in line
+
+
+async def test_relative_now_when_imminent(monkeypatch):
+    events = [{"start": _at(19, 0, 0), "title": "Standup", "all_day": False}]
+    line = (await _render(monkeypatch, events, now=_at(18, 59, 30)))[1]  # 30s away
+    assert line.rstrip().endswith("NOW")
+
+
+async def test_absolute_time_when_over_an_hour(monkeypatch):
+    events = [{"start": _at(19, 0), "title": "Standup", "all_day": False}]
+    line = (await _render(monkeypatch, events, now=_at(17, 0)))[1]  # 2 hours away
+    assert line.rstrip().endswith("7P")
+    assert "MIN" not in line
 
 
 async def test_no_url_message(monkeypatch):

@@ -7,7 +7,8 @@ All notable changes to FlipperBoards are documented here.
 ### Changed
 - Calendar events use a compact numeric date (`7/20`) and short time (`7P`,
   `11:15A`) so the event title gets most of the row instead of being clipped
-  to a few letters; all-day events show no time
+  to a few letters; all-day events show no time, and events under an hour away
+  count down (`15MIN`, `NOW`) instead of showing a clock time
 - Weather now uses Pirate Weather (pirateweather.net, free tier) when an API
   key is set, replacing OpenWeatherMap; Open-Meteo remains the keyless
   fallback. The location accepts coordinates — decimal or DMS, optionally

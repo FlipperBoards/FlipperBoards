@@ -13,6 +13,14 @@ def _compact_time(dt: datetime) -> str:
     return f"{hour}:{dt.minute:02d}{meridian}"
 
 
+def _event_time_str(dt: datetime, now: datetime) -> str:
+    """Countdown when imminent (NOW, 15MIN), otherwise the clock time."""
+    minutes = (dt - now).total_seconds() / 60
+    if 0 <= minutes < 60:
+        return "NOW" if minutes < 1 else f"{int(minutes)}MIN"
+    return _compact_time(dt)
+
+
 def _event_line(cols: int, date_str: str, time_str: str, title: str) -> str:
     """`7/20 PUTTING PRACTICE  7P` — short date left, time right-aligned (or
     absent for all-day), title fills everything in between."""
@@ -33,7 +41,8 @@ def _event_line(cols: int, date_str: str, time_str: str, title: str) -> str:
 
 
 async def get_calendar_matrix(rows: int, cols: int, ical_url: str = "",
-                               timezone: str = "UTC") -> list[list[int]]:
+                               timezone: str = "UTC",
+                               now: datetime | None = None) -> list[list[int]]:
     matrix = blank_matrix(rows, cols)
 
     if not ical_url:
@@ -41,6 +50,12 @@ async def get_calendar_matrix(rows: int, cols: int, ical_url: str = "",
         pad = max(0, (cols - len(msg)) // 2)
         matrix[0] = text_to_row(" " * pad + msg, cols)
         return matrix
+
+    if now is None:
+        try:
+            now = datetime.now(pytz.timezone(timezone))
+        except Exception:
+            now = datetime.now(pytz.utc)
 
     events = await _fetch_events(ical_url, timezone)
 
@@ -58,7 +73,7 @@ async def get_calendar_matrix(rows: int, cols: int, ical_url: str = "",
     for i, event in enumerate(events[:rows - 1]):
         dt = event["start"]
         date_str = f"{dt.month}/{dt.day}"
-        time_str = "" if event.get("all_day") else _compact_time(dt)
+        time_str = "" if event.get("all_day") else _event_time_str(dt, now)
         line = _event_line(cols, date_str, time_str, event["title"])
         matrix[i + 1] = text_to_row(line, cols)
 
