@@ -1,0 +1,56 @@
+#!/bin/sh
+# FlipperBoards kiosk — labwc (Wayland) autostart sample
+#
+# For Raspberry Pi OS with desktop (Bookworm and later), which boots into the
+# labwc Wayland compositor. Copy the parts you need into:
+#
+#     ~/.config/labwc/autostart      (and make sure it is chmod +x)
+#
+# The old X11 tools from kiosk.sh do NOT apply here:
+#   - xset s off / -dpms   → X11-only. labwc only blanks the screen if a
+#     "swayidle ... wlopm --off" line is present in this file (the Screen
+#     Blanking toggle in the Control Centre / raspi-config adds or removes
+#     it). Keep that toggle OFF and there is nothing to disable.
+#   - unclutter            → X11-only; native-Wayland Chromium ignores it.
+#     With no pointing device attached, labwc shows no cursor at all. If a
+#     mouse must stay attached, use a transparent cursor theme or the
+#     swayidle+wtype keybind trick.
+#   - openbox              → not needed; labwc IS the window manager.
+
+# ── Adjust these ──────────────────────────────────────────────────────────────
+FB_SERVER_URL="http://10.10.254.5:8000"   # your FlipperBoards server
+FB_SCREEN="office"                        # screen id (blank for main)
+# Optional display tuning: append &scale=0.75 or &fps=20 to pin the renderer,
+# or &sound=0 to mute this display. The engine self-tunes if you leave it be.
+
+# ── Keep the display on (belt & braces on top of the blanking toggle) ─────────
+wlr-randr --output HDMI-A-1 --on
+
+# ── Wait for the server so a cold boot doesn't land on an error page ──────────
+until curl -sf --max-time 3 "$FB_SERVER_URL/api/screens" >/dev/null 2>&1; do
+    sleep 2
+done
+
+# ── Launch Chromium in kiosk mode ─────────────────────────────────────────────
+# IMPORTANT: the URL must be QUOTED. Unquoted, the shell treats the & in
+# "?screen=office&kiosk=1" as a background operator — Chromium then loads the
+# URL WITHOUT kiosk=1 and the on-screen chrome stays visible.
+URL="$FB_SERVER_URL/display?kiosk=1"
+[ -n "$FB_SCREEN" ] && URL="$URL&screen=$FB_SCREEN"
+
+chromium \
+    --kiosk \
+    --password-store=basic \
+    --noerrdialogs \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-features=TranslateUI \
+    --autoplay-policy=no-user-gesture-required \
+    --check-for-update-interval=31536000 \
+    --no-first-run \
+    --ozone-platform=wayland \
+    --ignore-gpu-blocklist \
+    --enable-gpu-rasterization \
+    --enable-zero-copy \
+    --disable-smooth-scrolling \
+    "$URL" &
