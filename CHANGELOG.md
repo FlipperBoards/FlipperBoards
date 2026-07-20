@@ -57,7 +57,9 @@ All notable changes to FlipperBoards are documented here.
 - Named playlist **sets**: organize the queue into named lists (tabs) and
   rotate between them — activate one manually, or give a set a schedule
   (start/end time + weekdays) so it auto-activates (Morning / Lunch / Dinner).
-  The scheduled set wins; a manual pick holds until the next boundary
+  The scheduled set wins; a manual pick holds until the next boundary. Sets can
+  also be activated over MQTT (`<screen>/set/set` with a set name or id) for
+  Home Assistant automations
 - Sound scheduling: restrict flip sounds to set hours/days (Config → Sound),
   evaluated server-side in the configured timezone. Individual pushes can
   override it — `sound: true` (the Text tab's Chime box, or REST/MQTT) forces

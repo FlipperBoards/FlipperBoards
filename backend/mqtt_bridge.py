@@ -15,6 +15,7 @@ Topic contract (base topic configurable, default "flipperboards"):
     {base}/<screen>/drivetime/set            [{"name":"HOME","dest":"123 Main St"}] or
                                              [{"name":"HOME","minutes":23,"traffic":"heavy"}];
                                              empty/"clear" returns to configured list
+    {base}/<screen>/set/set                  playlist set name or id — activate it (e.g. "Happy Hour")
     {base}/<screen>/scoreboard/<item_id>/set same, targeting a specific playlist item
 
   State (published, retained):

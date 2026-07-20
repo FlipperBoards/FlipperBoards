@@ -1767,18 +1767,24 @@ async def delete_playlist_set(set_id: int, screen: str = Query(default="main")):
     return {"status": "deleted"}
 
 
-@app.post("/api/playlist/sets/{set_id}/activate")
-async def activate_playlist_set(set_id: int, screen: str = Query(default="main")):
-    state = get_screen_state(screen)
-    await _assert_set_on_screen(screen, set_id)
+async def _activate_set(state: ScreenState, set_id: int) -> None:
+    """Make a set the one that plays: reload its items and restart rotation.
+    A manual activation holds until the next scheduled boundary."""
     state.active_set_id = set_id
     await _reload_playlist(state, resolve=False)
     state.playlist_pos = 0
     _cancel_push_timer(state)
     if state.playlist_items:
         await _render_playlist_item(state, transition="sweep")
-    _stop_screen_rotation(screen)
-    _start_screen_rotation(screen)
+    _stop_screen_rotation(state.screen_id)
+    _start_screen_rotation(state.screen_id)
+
+
+@app.post("/api/playlist/sets/{set_id}/activate")
+async def activate_playlist_set(set_id: int, screen: str = Query(default="main")):
+    state = get_screen_state(screen)
+    await _assert_set_on_screen(screen, set_id)
+    await _activate_set(state, set_id)
     return {"status": "ok", "active_set_id": set_id}
 
 
@@ -1787,6 +1793,15 @@ async def _assert_set_on_screen(screen: str, set_id: int) -> list[dict]:
     if not any(s["id"] == set_id for s in sets):
         raise HTTPException(404, f"Set {set_id} not found on screen '{screen}'")
     return sets
+
+
+def _resolve_set_ref(sets: list[dict], ref) -> int | None:
+    """Match an MQTT set reference (id or case-insensitive name) to a set id."""
+    ref = str(ref).strip()
+    for s in sets:
+        if str(s["id"]) == ref or s["name"].lower() == ref.lower():
+            return s["id"]
+    return None
 
 
 async def _reactivate(state: ScreenState) -> None:
@@ -2204,6 +2219,16 @@ async def _mqtt_dispatch(screen_id: str, command: str, arg: str | None, payload:
 
         elif command == "mode":
             await push_mode(ModeContent(mode=payload), screen=screen_id)
+
+        elif command == "set":
+            # Activate a playlist set by id or name (e.g. "Happy Hour")
+            ref = data.get("set") if data else payload
+            sets = await database.get_sets(screen_id)
+            target = _resolve_set_ref(sets, ref)
+            if target is not None:
+                await _activate_set(state, target)
+            else:
+                logger.warning(f"MQTT: set '{ref}' not found on screen '{screen_id}'")
 
         elif command == "drivetime":
             # Payload: JSON list of {"name","dest"} (computed via Google) or
