@@ -200,7 +200,7 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | Weather | Current conditions via Pirate Weather (key) or Open-Meteo (no key) |
 | News | Top headlines — falls back to BBC/Reuters RSS with no API key |
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
-| Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) |
+| Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) — compact `M/D` date so titles get the room |
 | Sports | Live scores across one or many leagues (NFL, NBA, MLB, NHL, college, MLS, EPL) with status filtering and full team names — no API key |
 | Countdown | Days / hours:minutes:seconds to any date (or count up since one) — seconds tick live |
 | Stocks | Stock & crypto prices with % change and green/red direction tiles — no API key needed |
