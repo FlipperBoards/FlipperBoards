@@ -176,6 +176,25 @@ wakes before opening. Configure per screen in **Screens → edit (✎)**:
 
 ---
 
+## Sound
+
+Flip sounds are synthesized in the browser (no audio files). Control them in
+**Config → Sound**:
+
+- **Flip Sound Effects** — master on/off
+- **Sound Schedule** — restrict the clatter to set hours and days (e.g. sound
+  on 11:00–22:00 while the venue is open, silent otherwise). Overnight windows
+  work naturally. The server evaluates this in the configured timezone.
+- **Chime an announcement** — a push sent with `sound: true` (the **Chime**
+  checkbox on the Text tab, or `"sound":true` in a REST/MQTT push) plays the
+  flip clatter *even when the board is muted or off-schedule* — so a "LAST
+  CALL" grabs attention without the board clicking all day. `sound: false`
+  pushes silently.
+- **Per-display override** — add `?sound=0` to a display URL to mute that
+  specific TV regardless, or `?sound=1` to always play on it.
+
+---
+
 ## Multiple Screens
 
 Each screen is an independent display with its own mode rotation, playlist, text queue, and WebSocket group. Create and manage screens in the **Screens** tab of the remote control, or via the API:
@@ -355,6 +374,12 @@ Color individual letters with markup — `{red}HAPPY HOUR{/} 5-7PM` renders
 Works in pushed text and playlist text items; the Text tab preview shows it
 live.
 
+Add `"sound": true` to any push (`text`, `matrix`, `color-matrix`, photo,
+design) to force the flip clatter for that announcement even when the board is
+muted or outside its sound schedule — or `"sound": false` to push silently.
+The **Chime** checkbox on the Text tab does this. Omit it to follow the
+schedule.
+
 ```http
 POST /api/display/matrix
 { "matrix": [[1,2,3,...], ...] }
@@ -485,7 +510,7 @@ Base topic is configurable (default `flipperboards`); `<sid>` is the screen id
 
 | Topic | Payload |
 |-------|---------|
-| `flipperboards/<sid>/text/set` | `HELLO WORLD` or `{"text":"HI","duration":30}` |
+| `flipperboards/<sid>/text/set` | `HELLO WORLD` or `{"text":"HI","duration":30,"sound":true}` |
 | `flipperboards/<sid>/matrix/set` | `{"matrix":[[...codes...]],"duration":30}` |
 | `flipperboards/<sid>/design/set` | design name, id, or `{"design":"My Design","duration":60}` |
 | `flipperboards/<sid>/image/set` | library image id/name or `{"image":12,"duration":60}` |
@@ -542,7 +567,8 @@ mode is active again.
 | `tile_color` | `#ffffff` | Character color |
 | `tile_bg_color` | `#2a2a2a` | Tile background |
 | `bg_color` | `#1a1a1a` | Board background |
-| `sound_enabled` | `true` | Flip sound synthesis |
+| `sound_enabled` | `true` | Flip sound synthesis (master switch) |
+| `sound_schedule` | `{}` | `{enabled, on_time, off_time, days}` — sound plays only inside this window |
 | `physical_mode` | `false` | Physical frame mode |
 | `divider_width` | `4` | Pixels between tiles (0–20) |
 | `divider_color` | `#111111` | Gap color |

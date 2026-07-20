@@ -14,6 +14,9 @@ export function useDisplayState(screenId = 'main') {
   const [connected, setConnected] = useState(false)
   const [sweepNonce, setSweepNonce] = useState(0)
   const [textColors, setTextColors] = useState(null)
+  // Per-update sound cue from the server (schedule + per-push override). null
+  // until the first content message; DisplayView falls back to the setting.
+  const [soundCue, setSoundCue] = useState(null)
 
   const handleMessage = useCallback((data) => {
     const forMe = !data.screen_id || data.screen_id === screenId
@@ -26,6 +29,7 @@ export function useDisplayState(screenId = 'main') {
           setCols(data.cols || 22)
           setMode(data.mode || 'clock')
           setTextColors(data.text_colors || null)
+          if ('sound' in data) setSoundCue(data.sound)
           setColorMatrix(null)
           setPhotoUrl(null)
         }
@@ -37,6 +41,7 @@ export function useDisplayState(screenId = 'main') {
           setRows(r => data.rows || r)
           setCols(c => data.cols || c)
           setMode('image_push')
+          if ('sound' in data) setSoundCue(data.sound)
         }
         break
       case 'photo_split':
@@ -46,6 +51,7 @@ export function useDisplayState(screenId = 'main') {
           setRows(r => data.rows || r)
           setCols(c => data.cols || c)
           setMode('photo_push')
+          if ('sound' in data) setSoundCue(data.sound)
         }
         break
       case 'settings_update':
@@ -64,5 +70,5 @@ export function useDisplayState(screenId = 'main') {
   // receipt — so indicators go red when the server dies or Wi-Fi drops.
   useWebSocket(handleMessage, screenId, setConnected)
 
-  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, sweepNonce, textColors }
+  return { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, modes, screens, connected, sweepNonce, textColors, soundCue }
 }

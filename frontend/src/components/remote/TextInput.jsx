@@ -40,6 +40,7 @@ export default function TextInput({ screenId = 'main', onRefresh, rows = 6, cols
   const [busy, setBusy] = useState(false)
   const [pushDuration, setPushDuration] = useState('')   // '' = until changed
   const [rotDuration, setRotDuration] = useState(30)     // rotation queue hold time
+  const [chime, setChime] = useState(false)              // force flip sound for this push
   const showToast = useToast()
 
   const qs = `?screen=${encodeURIComponent(screenId)}`
@@ -62,6 +63,7 @@ export default function TextInput({ screenId = 'main', onRefresh, rows = 6, cols
       await apiJson(`/api/display/text${qs}`, 'POST', {
         text,
         duration: pushDuration !== '' ? parseInt(pushDuration, 10) : null,
+        ...(chime ? { sound: true } : {}),
       })
       setStatus('sent')
       setTimeout(() => setStatus(''), 2000)
@@ -130,16 +132,23 @@ export default function TextInput({ screenId = 'main', onRefresh, rows = 6, cols
           style={{ borderTop: '1px solid var(--border)' }}
         >
           <DurationPicker value={pushDuration} onChange={setPushDuration} />
-          <button
-            type="submit"
-            form="text-form"
-            onClick={pushText}
-            disabled={!text.trim() || busy}
-            className="fb-btn-primary text-[11px] px-4 py-1.5 flex-shrink-0"
-            style={status === 'sent' ? { background: '#16a34a' } : {}}
-          >
-            {busy ? 'Sending…' : status === 'sent' ? '✓ Sent' : 'Send Now'}
-          </button>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none"
+              style={{ color: chime ? 'var(--accent)' : 'var(--text-3)' }} title="Play the flip clatter even if the board is normally muted">
+              <input type="checkbox" checked={chime} onChange={e => setChime(e.target.checked)} />
+              🔔 Chime
+            </label>
+            <button
+              type="submit"
+              form="text-form"
+              onClick={pushText}
+              disabled={!text.trim() || busy}
+              className="fb-btn-primary text-[11px] px-4 py-1.5 flex-shrink-0"
+              style={status === 'sent' ? { background: '#16a34a' } : {}}
+            >
+              {busy ? 'Sending…' : status === 'sent' ? '✓ Sent' : 'Send Now'}
+            </button>
+          </div>
         </div>
 
         {/* Rotation queue row */}

@@ -43,7 +43,7 @@ export default function DisplayView() {
   const fpsParam = parseInt(searchParams.get('fps'), 10)
   const tickFps = Number.isFinite(fpsParam) ? fpsParam : null
 
-  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce, textColors } = useDisplayState(screenId)
+  const { matrix, colorMatrix, photoUrl, rows, cols, mode, appSettings, connected, sweepNonce, textColors, soundCue } = useDisplayState(screenId)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [showControls, setShowControls] = useState(true)
@@ -91,8 +91,15 @@ export default function DisplayView() {
   const bgColor = appSettings.bg_color || '#1a1a1a'
   const tileBgColor = appSettings.tile_bg_color || '#2a2a2a'
   const tileColor = appSettings.tile_color || '#ffffff'
+  // ?sound=0/1 is a per-display hard override (this TV always/never clicks).
+  // Otherwise the server's per-update cue (sound schedule + per-push override)
+  // decides, falling back to the global setting before the first message.
   const soundParam = searchParams.get('sound')
-  const soundEnabled = soundParam !== null ? soundParam !== '0' : appSettings.sound_enabled !== 'false'
+  const soundEnabled = soundParam !== null
+    ? soundParam !== '0'
+    : (soundCue !== null && soundCue !== undefined
+        ? soundCue
+        : appSettings.sound_enabled !== 'false')
   const flipDuration = parseInt(appSettings.flip_duration || '120', 10)
   const dividerWidth = parseInt(appSettings.divider_width || '4', 10)
   const dividerColor = appSettings.divider_color || '#111111'
