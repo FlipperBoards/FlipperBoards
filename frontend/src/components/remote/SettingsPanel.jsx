@@ -267,8 +267,8 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
 
       {/* Weather */}
       <Section title="Weather — Pirate Weather">
-        <Field label="Location (City, Country)">
-          <input type="text" placeholder="Portland,US" value={s.weather_location || ''}
+        <Field label="Location (city or coordinates)">
+          <input type="text" placeholder="Portland,US — or 33.413, -111.604" value={s.weather_location || ''}
             onChange={e => set('weather_location', e.target.value)} className="fb-input" />
         </Field>
         <Field label="API Key">

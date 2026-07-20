@@ -538,7 +538,7 @@ mode is active again.
 | `divider_color` | `#111111` | Gap color |
 | `weather_api_key` | — | Pirate Weather key (optional) |
 | `google_maps_api_key` | — | Google Maps key for Drive Times (Routes API) |
-| `weather_location` | — | e.g. `Portland,US` |
+| `weather_location` | — | `Portland,US`, coordinates (`33.413, -111.604`), or labeled coords (`Home \| 33.413, -111.604`) |
 | `weather_units` | `imperial` | `imperial` or `metric` |
 | `news_api_key` | — | NewsAPI key (optional) |
 | `news_categories` | `["technology","general"]` | JSON array |
