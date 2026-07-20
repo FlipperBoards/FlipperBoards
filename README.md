@@ -114,7 +114,7 @@ can be a display. Two purpose-built clients are included:
 
 | Client | Where | Setup |
 |--------|-------|-------|
-| **Pi kiosk** | Raspberry Pi wired to a TV — boots straight into fullscreen Chromium | [`deploy/pi-kiosk/`](deploy/pi-kiosk/) |
+| **Pi kiosk** | Raspberry Pi wired to a TV — boots straight into fullscreen Chromium (labwc/Wayland autostart or X11 systemd variants) | [`deploy/pi-kiosk/`](deploy/pi-kiosk/) |
 | **Android app** | Android TV, tablets, cheap HDMI sticks | [`android/`](android/) — APK built by CI |
 
 Both point at the server over the network; the display updates live via

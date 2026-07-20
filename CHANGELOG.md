@@ -27,6 +27,10 @@ All notable changes to FlipperBoards are documented here.
   one clack per frame scaled by how many flaps landed
 
 ### Added
+- labwc/Wayland kiosk support: `deploy/pi-kiosk/labwc-autostart.sample` for
+  current Raspberry Pi OS desktop images, with docs covering the Wayland
+  equivalents of screen blanking/cursor hiding and the unquoted-URL pitfall
+  that silently drops `kiosk=1`
 - Playlist time windows (dayparting): every playlist item can carry a start
   time, end time, and weekday selection — the lunch menu shows at lunch, the
   dinner menu at dinner; overnight windows supported; all-items-out-of-window
