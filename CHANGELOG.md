@@ -40,11 +40,14 @@ All notable changes to FlipperBoards are documented here.
 
 ### Changed
 - News mode now uses Google News (no API key) with per-screen filtering —
-  keyword search (with operators), include/exclude source domains, topic
-  section, recency, and locale — replacing the NewsAPI-key/RSS setup. Built on
-  Google News RSS directly (same feeds the google-news-api project wraps), so
-  no extra dependency. The old `news_api_key`/`news_categories`/`news_sources`
-  global settings are gone; news is configured per screen in the mode's ⚙
+  keyword search (with operators), multi-select topics, include/exclude source
+  domains, recency, and locale — replacing the NewsAPI-key/RSS setup. Source
+  and recency filters apply uniformly to keyword searches AND topic sections
+  (topics are filtered client-side from each item's source domain and publish
+  time, since Google's `site:`/`when:` operators don't work on sections). Built
+  on Google News RSS directly (same feeds the google-news-api project wraps),
+  so no extra dependency. The old `news_api_key`/`news_categories`/
+  `news_sources` global settings are gone; news is configured per screen
 
 ### Added
 - Sound scheduling: restrict flip sounds to set hours/days (Config → Sound),
