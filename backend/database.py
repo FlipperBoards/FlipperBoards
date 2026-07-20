@@ -167,9 +167,28 @@ async def _create_tables(db: aiosqlite.Connection):
         )
     """)
 
+    # Named playlist sets — a screen can hold several sets and rotate between
+    # them (manually or by schedule); each item belongs to one set.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS playlist_sets (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id      INTEGER NOT NULL DEFAULT 1,
+            screen_id   TEXT    NOT NULL,
+            name        TEXT    NOT NULL DEFAULT 'Playlist',
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            schedule    TEXT    NOT NULL DEFAULT '{}'
+        )
+    """)
+    # playlist_items.set_id — additive for existing DBs (ignore if present)
+    try:
+        await db.execute("ALTER TABLE playlist_items ADD COLUMN set_id INTEGER")
+    except Exception:
+        pass
+
     # Lookup indexes — these tables are queried by (org_id, screen_id)/folder
     # on every rotation tick and remote-control fetch
     await db.execute("CREATE INDEX IF NOT EXISTS idx_playlist_screen ON playlist_items(org_id, screen_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_sets_screen ON playlist_sets(org_id, screen_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_messages_screen ON text_messages(org_id, screen_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_designs_screen  ON designs(org_id, screen_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_images_folder   ON image_library(org_id, folder)")
@@ -446,15 +465,90 @@ async def delete_text_message(msg_id: int, org_id: int = DEFAULT_ORG_ID):
 
 # ── Universal content playlist ────────────────────────────────────────────────
 
-async def get_playlist_items(
-    screen_id: str, org_id: int = DEFAULT_ORG_ID
-) -> list[dict]:
+# ── Playlist sets (named groups of items) ─────────────────────────────────────
+
+async def get_sets(screen_id: str, org_id: int = DEFAULT_ORG_ID) -> list[dict]:
+    """Sets for a screen. If none exist yet, create a default 'Playlist' set
+    and adopt any pre-existing items into it (seamless migration)."""
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, type, content, duration, sort_order, window FROM playlist_items "
+            "SELECT id, name, sort_order, schedule FROM playlist_sets "
             "WHERE screen_id=? AND org_id=? ORDER BY sort_order, id",
             (screen_id, org_id)
+        ) as cur:
+            rows = await cur.fetchall()
+        if not rows:
+            async with db.execute(
+                "INSERT INTO playlist_sets (org_id, screen_id, name, sort_order) VALUES (?, ?, 'Playlist', 0)",
+                (org_id, screen_id)
+            ) as cur:
+                default_id = cur.lastrowid
+            await db.execute(
+                "UPDATE playlist_items SET set_id=? WHERE screen_id=? AND org_id=? AND set_id IS NULL",
+                (default_id, screen_id, org_id)
+            )
+            await db.commit()
+            rows = [{"id": default_id, "name": "Playlist", "sort_order": 0, "schedule": "{}"}]
+    result = []
+    for row in rows:
+        try:
+            schedule = json.loads(row["schedule"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            schedule = {}
+        result.append({"id": row["id"], "name": row["name"],
+                       "sort_order": row["sort_order"], "schedule": schedule})
+    return result
+
+
+async def add_set(screen_id: str, name: str, org_id: int = DEFAULT_ORG_ID) -> int:
+    async with _connect() as db:
+        async with db.execute(
+            "INSERT INTO playlist_sets (org_id, screen_id, name, sort_order) VALUES (?, ?, ?, "
+            "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_sets WHERE screen_id=? AND org_id=?))",
+            (org_id, screen_id, name, screen_id, org_id)
+        ) as cur:
+            row_id = cur.lastrowid
+        await db.commit()
+    return row_id
+
+
+async def update_set(set_id: int, name: str | None = None,
+                     schedule: dict | None = None, org_id: int = DEFAULT_ORG_ID):
+    async with _connect() as db:
+        if name is not None:
+            await db.execute("UPDATE playlist_sets SET name=? WHERE id=? AND org_id=?",
+                             (name, set_id, org_id))
+        if schedule is not None:
+            await db.execute("UPDATE playlist_sets SET schedule=? WHERE id=? AND org_id=?",
+                             (json.dumps(schedule), set_id, org_id))
+        await db.commit()
+
+
+async def delete_set(set_id: int, org_id: int = DEFAULT_ORG_ID):
+    """Delete a set and all its items."""
+    async with _connect() as db:
+        await db.execute("DELETE FROM playlist_items WHERE set_id=? AND org_id=?", (set_id, org_id))
+        await db.execute("DELETE FROM playlist_sets WHERE id=? AND org_id=?", (set_id, org_id))
+        await db.commit()
+
+
+# ── Universal content playlist items ──────────────────────────────────────────
+
+async def get_playlist_items(
+    screen_id: str, org_id: int = DEFAULT_ORG_ID, set_id: int | None = None,
+) -> list[dict]:
+    where = "screen_id=? AND org_id=?"
+    params: list = [screen_id, org_id]
+    if set_id is not None:
+        where += " AND set_id=?"
+        params.append(set_id)
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, type, content, duration, sort_order, window, set_id FROM playlist_items "
+            f"WHERE {where} ORDER BY sort_order, id",
+            tuple(params)
         ) as cur:
             rows = await cur.fetchall()
     result = []
@@ -470,21 +564,22 @@ async def get_playlist_items(
             "duration": row["duration"],
             "sort_order": row["sort_order"],
             "window": window,
+            "set_id": row["set_id"],
         })
     return result
 
 
 async def add_playlist_item(
     screen_id: str, item_type: str, content: dict, duration: int,
-    window: dict | None = None, org_id: int = DEFAULT_ORG_ID,
+    window: dict | None = None, org_id: int = DEFAULT_ORG_ID, set_id: int | None = None,
 ) -> int:
     async with _connect() as db:
         async with db.execute(
-            "INSERT INTO playlist_items (org_id, screen_id, type, content, duration, window, sort_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, "
+            "INSERT INTO playlist_items (org_id, screen_id, type, content, duration, window, set_id, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, "
             "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlist_items WHERE screen_id=? AND org_id=?))",
             (org_id, screen_id, item_type, json.dumps(content), duration,
-             json.dumps(window or {}), screen_id, org_id)
+             json.dumps(window or {}), set_id, screen_id, org_id)
         ) as cur:
             row_id = cur.lastrowid
         await db.commit()
@@ -517,11 +612,15 @@ async def remove_playlist_item(item_id: int, org_id: int = DEFAULT_ORG_ID):
         await db.commit()
 
 
-async def clear_playlist_items(screen_id: str, org_id: int = DEFAULT_ORG_ID):
+async def clear_playlist_items(screen_id: str, org_id: int = DEFAULT_ORG_ID,
+                               set_id: int | None = None):
+    where = "screen_id=? AND org_id=?"
+    params: list = [screen_id, org_id]
+    if set_id is not None:
+        where += " AND set_id=?"
+        params.append(set_id)
     async with _connect() as db:
-        await db.execute(
-            "DELETE FROM playlist_items WHERE screen_id=? AND org_id=?", (screen_id, org_id)
-        )
+        await db.execute(f"DELETE FROM playlist_items WHERE {where}", tuple(params))
         await db.commit()
 
 

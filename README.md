@@ -319,6 +319,32 @@ The **Playlist** tab builds an ordered sequence of any content type. When the pl
 
 Remove all playlist items to return to the Modes rotation.
 
+### Per-item configuration
+
+A **Mode** item carries its **own** config, edited with the ⚙ button on its
+row (the same fields as the Modes tab). So the same mode can appear several
+times with different settings — a News item for `Phoenix Suns · espn.com`
+next to another for `Business · past 24h`, or Sports items for different
+leagues — all rotating in one sequence. Live modes (countdown, drive times)
+tick using each item's own config.
+
+### Named sets
+
+The queue is organized into **sets** — named lists shown as tabs at the top
+(the default is "Playlist"). Only one set plays at a time; the others sit
+ready. Use sets to keep a "Morning", "Lunch", and "Game Night" lineup and
+switch between them:
+
+- **Activate** a set manually to make it the one that plays.
+- Give a set a **⏱ Schedule** (start/end time + weekdays) and it
+  auto-activates during that window — e.g. a Lunch set `11:00–16:00`, a Dinner
+  set `16:00–23:00`. The scheduled set wins; outside every window the first set
+  plays. A manual activation holds until the next scheduled boundary (same as
+  quiet hours).
+
+Editing a set (adding items, reordering) doesn't disturb whatever set is
+currently playing.
+
 ### Time windows (dayparting)
 
 Every playlist item can carry a time window (the ⏱ button on its row): start
