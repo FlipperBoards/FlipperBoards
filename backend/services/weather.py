@@ -1,5 +1,6 @@
 import httpx
 from charmap import text_to_row, blank_matrix
+from services.geo import parse_coords
 
 PIRATE_BASE = "https://api.pirateweather.net/forecast"
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -37,8 +38,27 @@ async def get_weather_matrix(rows: int, cols: int, api_key: str = "",
     return await _open_meteo(rows, cols, location, units, unit_sym)
 
 
+def resolve_coords(location: str):
+    """Coordinate locations skip geocoding. Accepts a `Name |` label prefix:
+    `Home | 33.413, -111.604` → (33.413, -111.604, "HOME", "").
+    Returns None when the string isn't coordinates (geocode it instead)."""
+    label = ""
+    place = location
+    if "|" in location:
+        label, place = location.split("|", 1)
+        label, place = label.strip(), place.strip()
+    coords = parse_coords(place)
+    if not coords:
+        return None
+    return (coords[0], coords[1], (label or "LOCAL").upper(), "")
+
+
 async def _geocode(client, location):
-    """Location name → (lat, lon, city, country) via Open-Meteo's geocoder."""
+    """Location → (lat, lon, city, country); coordinates resolve directly,
+    names go through Open-Meteo's geocoder."""
+    direct = resolve_coords(location)
+    if direct:
+        return direct
     cached = _geo_cache.get(location)
     if cached:
         return cached
@@ -98,23 +118,10 @@ async def _pirate(rows, cols, api_key, location, units, unit_sym):
 async def _open_meteo(rows, cols, location, units, unit_sym):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            # Geocode the location name
-            geo_resp = await client.get(
-                GEOCODING_URL,
-                params={"name": location, "count": 1, "language": "en"}
-            )
-            geo_resp.raise_for_status()
-            geo = geo_resp.json()
-
-            results = geo.get("results", [])
-            if not results:
+            geo = await _geocode(client, location)
+            if not geo:
                 return _error_matrix(rows, cols, f"LOCATION NOT FOUND: {location.upper()}")
-
-            place = results[0]
-            lat = place["latitude"]
-            lon = place["longitude"]
-            city = place.get("name", location).upper()
-            country = place.get("country_code", "").upper()
+            lat, lon, city, country = geo
 
             temp_unit = "fahrenheit" if units == "imperial" else "celsius"
             forecast = await client.get(
@@ -149,8 +156,9 @@ async def _open_meteo(rows, cols, location, units, unit_sym):
 
 
 def _build_matrix(rows, cols, city, country, temp, feels, high, low, humidity, desc, unit_sym):
+    place = f"{city}, {country}" if country else city
     lines = [
-        f"{city}, {country}  {temp}°{unit_sym}",
+        f"{place}  {temp}°{unit_sym}",
         desc,
         f"H:{high}° L:{low}°  FEELS {feels}°",
         f"HUMIDITY: {humidity}%",

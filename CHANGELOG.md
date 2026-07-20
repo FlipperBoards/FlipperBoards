@@ -7,7 +7,9 @@ All notable changes to FlipperBoards are documented here.
 ### Changed
 - Weather now uses Pirate Weather (pirateweather.net, free tier) when an API
   key is set, replacing OpenWeatherMap; Open-Meteo remains the keyless
-  fallback
+  fallback. The location accepts coordinates — decimal or DMS, optionally
+  labeled (`Home | 33.413, -111.604`) — skipping geocoding entirely; drive
+  times share the same parser
 - Canvas engine v2 for weak hardware: mid-flip poses are pre-rendered into
   the sprite atlas so every animation frame is a few same-size blits (no
   runtime scaling or per-frame allocation); animation draws on a bounded
