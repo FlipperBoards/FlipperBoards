@@ -5,6 +5,9 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Changed
+- Timezone picker now offers the full IANA list (~400 zones, grouped by
+  region) instead of 15 hardcoded ones — so zones like `America/Phoenix`
+  (no DST) are selectable and events render at the correct offset
 - Calendar events use a compact numeric date (`7/20`) and short time (`7P`,
   `11:15A`) so the event title gets most of the row instead of being clipped
   to a few letters; all-day events show no time, and events under an hour away

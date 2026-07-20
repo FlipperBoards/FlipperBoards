@@ -2,12 +2,36 @@ import React, { useState, useEffect } from 'react'
 import { apiJson } from '../../utils/api'
 import { useToast } from '../Toast'
 
-const TIMEZONES = [
+// Full IANA timezone list from the browser (all modern browsers, incl. the
+// Pi's Chromium). Falls back to a short list on very old browsers. The
+// backend uses pytz, which knows every IANA zone, so any value here is valid.
+const FALLBACK_TIMEZONES = [
   'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
-  'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
+  'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
   'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
   'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata', 'Australia/Sydney',
 ]
+
+const ALL_TIMEZONES = (() => {
+  try {
+    const zones = Intl.supportedValuesOf('timeZone')
+    if (zones && zones.length) return zones
+  } catch { /* older browser — use the fallback */ }
+  return FALLBACK_TIMEZONES
+})()
+
+// Group by region (America, Asia, …) so the dropdown is navigable; UTC stands alone.
+const TIMEZONE_GROUPS = (() => {
+  const groups = {}
+  for (const z of ALL_TIMEZONES) {
+    if (z === 'UTC') continue
+    const region = z.includes('/') ? z.split('/')[0] : 'Other'
+    ;(groups[region] ||= []).push(z)
+  }
+  return groups
+})()
+
+const tzCity = (tz) => tz.includes('/') ? tz.split('/').slice(1).join('/').replace(/_/g, ' ') : tz
 
 const TILE_PRESETS = [
   { label: 'Classic', tileColor: '#ffffff', tileBgColor: '#222222', bgColor: '#111111' },
@@ -260,7 +284,12 @@ export default function SettingsPanel({ settings: initialSettings, onUpdate }) {
         </div>
         <Field label="Timezone">
           <select value={s.timezone || 'UTC'} onChange={e => set('timezone', e.target.value)} className="fb-input">
-            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+            <option value="UTC">UTC</option>
+            {Object.entries(TIMEZONE_GROUPS).map(([region, zones]) => (
+              <optgroup key={region} label={region}>
+                {zones.map(tz => <option key={tz} value={tz}>{tzCity(tz)}</option>)}
+              </optgroup>
+            ))}
           </select>
         </Field>
       </Section>
