@@ -180,7 +180,7 @@ def _register_builtin_modes():
         return await get_sports_matrix(rows, cols,
             leagues=config.get("leagues"),
             league=config.get("league", "nfl"),   # legacy single-league fallback
-            status=config.get("status", "all"),
+            status=config.get("status", "live_final"),
             teams=config.get("teams"),
             team=config.get("team", ""),           # legacy single-team fallback
             screen_id=config.get("_screen_id", "main"))
@@ -269,12 +269,12 @@ def _register_builtin_modes():
             "type": "select",
             "label": "Show",
             "options": [
-                {"value": "all", "label": "All games"},
                 {"value": "live", "label": "Live now"},
+                {"value": "live_final", "label": "Live + Final"},
                 {"value": "upcoming", "label": "Upcoming"},
-                {"value": "final", "label": "Final"},
+                {"value": "all", "label": "All games"},
             ],
-            "default": "all",
+            "default": "live_final",
         },
         "teams": {
             "type": "text",

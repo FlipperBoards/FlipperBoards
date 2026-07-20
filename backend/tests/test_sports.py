@@ -110,14 +110,24 @@ async def test_status_upcoming_only():
     assert any("COWBOYS" in r for r in _text(m))
 
 
-async def test_status_final_only():
-    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], status="final")
-    assert any("49ERS" in r or "SAN FRANCISCO" in r for r in _text(m))
+async def test_status_live_plus_final():
+    # Keeps live (Chiefs) and final (49ers), drops upcoming (Cowboys)
+    seen = set()
+    for _ in range(4):
+        rows = " ".join(_text(await sports.get_sports_matrix(
+            6, 22, leagues=["nfl"], status="live_final", screen_id="lf")))
+        if "CHIEFS" in rows:
+            seen.add("live")
+        if "49ERS" in rows or "SAN FRANCISCO" in rows:
+            seen.add("final")
+        assert "COWBOYS" not in rows  # upcoming excluded
+    assert seen == {"live", "final"}
 
 
 async def test_status_none_matching_shows_message():
-    m = await sports.get_sports_matrix(6, 22, leagues=["nba"], status="final")
-    assert any("NO FINAL" in r for r in _text(m))
+    # NBA fixture has only a live game — live_final on... upcoming yields nothing
+    m = await sports.get_sports_matrix(6, 22, leagues=["nba"], status="upcoming")
+    assert any("NO UPCOMING" in r for r in _text(m))
 
 
 # ── Multi-league merge + league tag ───────────────────────────────────────────

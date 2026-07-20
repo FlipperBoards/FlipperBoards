@@ -33,8 +33,9 @@ All notable changes to FlipperBoards are documented here.
 
 ### Added
 - Sports mode now takes multiple leagues at once (merged into one rotation,
-  each row tagged with its league), a status filter (all / live / upcoming /
-  final), and multi-team filtering across leagues; it renders full team names
+  each row tagged with its league), a status filter (Live / Live + Final /
+  Upcoming / All, defaulting to Live + Final), and multi-team filtering
+  across leagues; it renders full team names
   where they fit (`KANSAS CITY CHIEFS` → `CHIEFS` → `KC`) instead of only
   abbreviations. Config uses a new multi-select chip widget
 - Drive Times mode: live driving times with traffic to up to 6 destinations
