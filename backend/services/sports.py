@@ -11,7 +11,7 @@ import time
 
 import httpx
 
-from charmap import blank_matrix, char_to_code, text_to_matrix, text_to_row
+from charmap import blank_matrix, char_to_code, sanitize_text, text_to_matrix, text_to_row
 from services.scoreboard import get_scoreboard_matrix
 
 # Win/loss accent tiles for the list layout (charmap color codes)
@@ -63,7 +63,8 @@ def _team_names(team: dict) -> dict:
     abbr = team.get("abbreviation") or team.get("shortDisplayName") or "?"
     short = team.get("shortDisplayName") or team.get("name") or abbr
     full = team.get("displayName") or team.get("name") or short
-    return {"full": full, "short": short, "abbr": abbr}
+    # Fold accented names (Montréal → MONTREAL) so best-fit widths are accurate
+    return {k: sanitize_text(v) for k, v in {"full": full, "short": short, "abbr": abbr}.items()}
 
 
 def _parse_games(data: dict, league: str) -> list[dict]:

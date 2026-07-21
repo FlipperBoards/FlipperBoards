@@ -54,9 +54,51 @@ def char_to_code(ch: str) -> int:
     return 0  # unknown -> blank
 
 
+# ── Text sanitizing ────────────────────────────────────────────────────────────
+# Feeds (calendar, news, ESPN) are full of "smart" punctuation and accented
+# letters the board has no tile for, which otherwise render as blank gaps — an
+# ugly hole between a word and its "'S". Fold the common look-alikes to ASCII and
+# drop anything still unrenderable, so text collapses (JOSÉ'S → JOSE'S) instead.
+
+import unicodedata as _unicodedata
+
+# Unicode punctuation → the plain ASCII tile that stands in for it
+_PUNCT_FOLD = {
+    "‘": "'", "’": "'", "‚": "'", "′": "'", "`": "'",  # ‘ ’ ‚ ′ `
+    "“": '"', "”": '"', "„": '"', "″": '"',            # “ ” „ ″
+    "–": "-", "—": "-", "―": "-", "−": "-",            # – — ― −
+    "…": "...",                                                        # …
+    " ": " ", " ": " ", " ": " ", "​": "",            # nbsp, figure/narrow, zero-width
+    "•": "·", "·": "·",                                # • · → middle-dot tile
+}
+
+
+def _sanitize_char(ch: str) -> str:
+    """One char → its renderable stand-in ('' if nothing fits). May return more
+    than one char (… → ...) or the char unchanged."""
+    repl = _PUNCT_FOLD.get(ch)
+    if repl is not None:
+        return repl
+    if ch in ("\n", "\t") or ch.upper() in CHAR_TO_CODE:
+        return ch
+    # Fold accents/diacritics to their base letter (é → e, ñ → n), then keep
+    # only the pieces that have a tile.
+    base = _unicodedata.normalize("NFKD", ch)
+    return "".join(c for c in base if not _unicodedata.combining(c) and c.upper() in CHAR_TO_CODE)
+
+
+def sanitize_text(text: str) -> str:
+    """Make arbitrary text renderable: fold smart punctuation and accented
+    letters to ASCII look-alikes and drop any remaining unrenderable character,
+    so unsupported input never leaves a stray blank tile mid-word."""
+    if not text:
+        return text
+    return "".join(_sanitize_char(ch) for ch in text)
+
+
 def text_to_row(text: str, cols: int) -> list[int]:
     row = []
-    for ch in text.upper():
+    for ch in sanitize_text(text).upper():
         row.append(char_to_code(ch))
         if len(row) >= cols:
             break
@@ -67,7 +109,7 @@ def text_to_row(text: str, cols: int) -> list[int]:
 
 def text_to_matrix(text: str, rows: int, cols: int) -> list[list[int]]:
     """Word-wrap text into a rows×cols matrix."""
-    words = text.upper().split()
+    words = sanitize_text(text).upper().split()
     lines = []
     current = ""
     for word in words:
@@ -151,10 +193,18 @@ def text_to_matrix_colored(text: str, rows: int, cols: int):
     when the text carries no markup."""
     clean, char_colors = parse_colored_text(text)
 
+    # Fold/strip unrenderable characters, keeping each survivor's color. A char
+    # may vanish (emoji) or expand (… → ...); colors follow one-to-one.
+    pairs = [
+        (c, color)
+        for ch, color in zip(clean, char_colors, strict=True)
+        for c in sanitize_text(ch)
+    ]
+
     # Words as (char, color) pair lists, mirroring text_to_matrix's wrapping
     words: list[list] = []
     current_word: list = []
-    for ch, color in zip(clean, char_colors, strict=True):
+    for ch, color in pairs:
         if ch.isspace():
             if current_word:
                 words.append(current_word)

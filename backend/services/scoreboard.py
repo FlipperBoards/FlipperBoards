@@ -13,7 +13,7 @@ G/R = green/red color accent tiles. Names left-aligned, scores
 right-aligned so a score change only flips its own digit tiles.
 """
 
-from charmap import char_to_code, blank_matrix
+from charmap import blank_matrix, char_to_code, sanitize_text
 
 HOME_ACCENT = 74  # green
 AWAY_ACCENT = 71  # red
@@ -38,7 +38,7 @@ def _team_row(cols: int, accent: int, name: str, score: int) -> list[int]:
     # Right-align score; keep a gap column between name and score
     score_start = cols - len(score_str)
     name_max = score_start - 3  # accent + space before name, space before score
-    name = (name or "").strip().upper()[: max(0, name_max)]
+    name = sanitize_text((name or "").strip()).upper()[: max(0, name_max)]
     for i, ch in enumerate(name):
         row[2 + i] = char_to_code(ch)
     for i, ch in enumerate(score_str):
@@ -54,7 +54,9 @@ def get_scoreboard_matrix(rows: int, cols: int,
 
     if rows == 1:
         # Single combined row: HOM 3-1 AWY
-        text = f"{(home_name or 'H')[:3].upper()} {home_score}-{away_score} {(away_name or 'A')[:3].upper()}"
+        home_abbr = sanitize_text(home_name or "H").upper()[:3] or "H"
+        away_abbr = sanitize_text(away_name or "A").upper()[:3] or "A"
+        text = f"{home_abbr} {home_score}-{away_score} {away_abbr}"
         row = [0] * cols
         start = max(0, (cols - len(text)) // 2)
         for i, ch in enumerate(text[: cols - start]):
