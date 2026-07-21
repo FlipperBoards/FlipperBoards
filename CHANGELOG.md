@@ -5,6 +5,14 @@ All notable changes to FlipperBoards are documented here.
 ## Unreleased
 
 ### Changed
+- Unrenderable characters are now folded or stripped instead of leaving blank
+  tiles: a new `sanitize_text` runs on all board text, mapping "smart"
+  punctuation to its ASCII tile (curly `’`→`'`, `“”`→`"`, en/em dashes→`-`,
+  `…`→`...`) and accented letters to their base (`JOSÉ'S`→`JOSE'S`,
+  `Montréal`→`MONTREAL`), then dropping anything with no tile (emoji, etc.) so
+  words close up cleanly. Applies to every text mode (calendar/news/quotes/…),
+  scoreboard and sports team names, and colored-text markup — with the
+  frontend preview mirroring the same folding
 - Timezone picker now offers the full IANA list (~400 zones, grouped by
   region) instead of 15 hardcoded ones — so zones like `America/Phoenix`
   (no DST) are selectable and events render at the correct offset

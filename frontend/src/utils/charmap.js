@@ -45,10 +45,36 @@ CHAR_TO_CODE[' '] = 0
 
 export const charToCode = (ch) => CHAR_TO_CODE[ch.toUpperCase()] ?? 0
 
+// ── Text sanitizing — mirrors backend charmap.sanitize_text ──────────────────
+// Fold "smart" punctuation and accented letters to ASCII look-alikes and drop
+// anything still unrenderable, so text collapses (JOSÉ'S → JOSE'S) instead of
+// leaving a blank tile mid-word.
+const PUNCT_FOLD = {
+  '‘': "'", '’': "'", '‚': "'", '′': "'", '`': "'",
+  '“': '"', '”': '"', '„': '"', '″': '"',
+  '–': '-', '—': '-', '―': '-', '−': '-',
+  '…': '...',
+  ' ': ' ', ' ': ' ', ' ': ' ', '​': '',
+  '•': '·', '·': '·',
+}
+
+export function sanitizeText(text) {
+  if (!text) return text ?? ''
+  let out = ''
+  for (const ch of text) {
+    if (ch in PUNCT_FOLD) { out += PUNCT_FOLD[ch]; continue }
+    if (ch === '\n' || ch === '\t' || ch.toUpperCase() in CHAR_TO_CODE) { out += ch; continue }
+    // Fold accents to base letters, then keep only renderable pieces
+    const base = ch.normalize('NFKD').replace(/\p{M}/gu, '')
+    for (const b of base) if (b.toUpperCase() in CHAR_TO_CODE) out += b
+  }
+  return out
+}
+
 /** Mirrors backend charmap.text_to_matrix: word-wrap, center each line
  * horizontally, center the block vertically. Used for local previews. */
 export function textToMatrix(text, rows, cols) {
-  const words = text.toUpperCase().split(/\s+/).filter(Boolean)
+  const words = sanitizeText(text).toUpperCase().split(/\s+/).filter(Boolean)
   const lines = []
   let current = ''
   for (let word of words) {
@@ -117,15 +143,18 @@ export function parseColoredText(text) {
 export function textToMatrixColored(text, rows, cols) {
   const [clean, charColors] = parseColoredText(text)
 
-  // Words as (char, color) pair lists, mirroring textToMatrix's wrapping
+  // Fold/strip unrenderable characters, keeping each survivor's color, then
+  // split into words — mirrors textToMatrix's wrapping. A char may vanish
+  // (emoji) or expand (… → ...); colors follow one-to-one.
   const words = []
   let currentWord = []
   for (let i = 0; i < clean.length; i++) {
-    const ch = clean[i]
-    if (/\s/.test(ch)) {
-      if (currentWord.length) { words.push(currentWord); currentWord = [] }
-    } else {
-      currentWord.push([ch.toUpperCase(), charColors[i]])
+    for (const c of sanitizeText(clean[i])) {
+      if (/\s/.test(c)) {
+        if (currentWord.length) { words.push(currentWord); currentWord = [] }
+      } else {
+        currentWord.push([c.toUpperCase(), charColors[i]])
+      }
     }
   }
   if (currentWord.length) words.push(currentWord)
