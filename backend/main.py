@@ -816,6 +816,7 @@ async def _schedule_tick_loop():
                         await _render_playlist_item(state, transition="sweep")
                     _stop_screen_rotation(state.screen_id)
                     _start_screen_rotation(state.screen_id)
+                    await _publish_active_set(state)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1731,7 +1732,15 @@ async def get_playlist_sets(screen: str = Query(default="main")):
     state = get_screen_state(screen)
     sets = await database.get_sets(screen)
     active = await _resolve_active_set(state)
-    return [{**s, "active": s["id"] == active} for s in sets]
+    out = []
+    for s in sets:
+        items = await database.get_playlist_items(screen, set_id=s["id"])
+        # Lightweight content preview so the UI can show what's in each set
+        preview = [{"type": it["type"], "mode": it["content"].get("mode")}
+                   for it in items[:6]]
+        out.append({**s, "active": s["id"] == active,
+                    "item_count": len(items), "preview": preview})
+    return out
 
 
 @app.post("/api/playlist/sets", status_code=201)
@@ -1739,6 +1748,8 @@ async def create_playlist_set(body: SetCreate, screen: str = Query(default="main
     get_screen_state(screen)
     await database.get_sets(screen)  # ensure the default set exists first
     set_id = await database.add_set(screen, body.name.strip() or "Set")
+    if _mqtt:
+        await _mqtt.refresh_discovery()  # update the HA selector's options
     return {"status": "created", "id": set_id}
 
 
@@ -1748,6 +1759,9 @@ async def update_playlist_set(set_id: int, body: SetUpdate, screen: str = Query(
     await _assert_set_on_screen(screen, set_id)
     await database.update_set(set_id, name=body.name,
                               schedule=body.schedule.model_dump() if body.schedule else None)
+    if body.name is not None and _mqtt:
+        await _mqtt.refresh_discovery()      # renamed → update the HA selector
+        await _publish_active_set(state)     # keep the state value in sync
     # A schedule change can move which set is active — re-resolve + re-render
     if body.schedule is not None:
         await _reactivate(state)
@@ -1764,7 +1778,19 @@ async def delete_playlist_set(set_id: int, screen: str = Query(default="main")):
     if state.active_set_id == set_id:
         state.active_set_id = None  # force re-resolve to another set
     await _reactivate(state)
+    if _mqtt:
+        await _mqtt.refresh_discovery()  # update the HA selector's options
     return {"status": "deleted"}
+
+
+async def _publish_active_set(state: ScreenState) -> None:
+    """Tell MQTT/HA which set is now playing (for the Playlist Set selector)."""
+    if not _mqtt:
+        return
+    sets = await database.get_sets(state.screen_id)
+    name = next((s["name"] for s in sets if s["id"] == state.active_set_id), None)
+    if name:
+        await _mqtt.publish_active_set(state.screen_id, name)
 
 
 async def _activate_set(state: ScreenState, set_id: int) -> None:
@@ -1778,6 +1804,7 @@ async def _activate_set(state: ScreenState, set_id: int) -> None:
         await _render_playlist_item(state, transition="sweep")
     _stop_screen_rotation(state.screen_id)
     _start_screen_rotation(state.screen_id)
+    await _publish_active_set(state)
 
 
 @app.post("/api/playlist/sets/{set_id}/activate")
@@ -1814,6 +1841,7 @@ async def _reactivate(state: ScreenState) -> None:
             await _render_playlist_item(state, transition="sweep")
         _stop_screen_rotation(state.screen_id)
         _start_screen_rotation(state.screen_id)
+        await _publish_active_set(state)
 
 
 # ── Universal content playlist items ──────────────────────────────────────────

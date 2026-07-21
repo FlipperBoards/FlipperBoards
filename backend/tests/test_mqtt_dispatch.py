@@ -25,6 +25,20 @@ async def test_mode_command(client):
     assert s["mode"] == "clock"
 
 
+def test_ha_set_selector_config():
+    from mqtt_bridge import MQTTBridge
+
+    class _S:
+        screen_id = "main"
+        name = "Main"
+    bridge = MQTTBridge(dispatch=None, screens_provider=dict, modes_provider=list)
+    topic, payload = bridge._set_select_config(_S(), ["Playlist", "Happy Hour"])
+    assert topic.endswith("/select/flipperboards_main/set/config")
+    assert payload["command_topic"] == "flipperboards/main/set/set"
+    assert payload["state_topic"] == "flipperboards/main/set/state"
+    assert payload["options"] == ["Playlist", "Happy Hour"]
+
+
 async def test_set_command_activates_by_name(client):
     import uuid
     sid = "mq" + uuid.uuid4().hex[:8]

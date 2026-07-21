@@ -228,12 +228,46 @@ class MQTTBridge:
             },
         }
 
+    def _set_select_config(self, state, names: list[str]) -> tuple[str, dict]:
+        sid = state.screen_id
+        base = self.base
+        topic = f"{HA_PREFIX}/select/flipperboards_{sid}/set/config"
+        payload = {
+            "name": "Playlist Set",
+            "unique_id": f"flipperboards_{sid}_set",
+            "command_topic": f"{base}/{sid}/set/set",
+            "state_topic": f"{base}/{sid}/set/state",
+            "options": names or ["Playlist"],
+            "icon": "mdi:playlist-play",
+            "availability_topic": f"{base}/bridge/availability",
+            "device": self._device_block(sid, state.name),
+        }
+        return topic, payload
+
+    async def publish_active_set(self, screen_id: str, set_name: str):
+        """Retained active-set name so the HA select reflects the current set."""
+        if not self._client:
+            return
+        try:
+            await self._client.publish(f"{self.base}/{screen_id}/set/state",
+                                       set_name, retain=True)
+        except Exception:
+            logger.debug("MQTT active-set publish failed", exc_info=True)
+
     async def _publish_discovery(self):
         if not self._client:
             return
         for state in self._screens().values():
             for topic, payload in self._discovery_configs(state).items():
                 await self._client.publish(topic, json.dumps(payload), retain=True)
+            # Playlist-set selector — options are dynamic (per-screen set names)
+            sets = await database.get_sets(state.screen_id)
+            topic, payload = self._set_select_config(state, [s["name"] for s in sets])
+            await self._client.publish(topic, json.dumps(payload), retain=True)
+            active = next((s["name"] for s in sets if s["id"] == state.active_set_id),
+                          sets[0]["name"] if sets else None)
+            if active:
+                await self.publish_active_set(state.screen_id, active)
 
     async def refresh_discovery(self):
         if self._client and self._ha_discovery:
@@ -247,7 +281,7 @@ class MQTTBridge:
         if not self._client:
             return
         for kind, entity in (("text", "message"), ("select", "mode"),
-                             ("button", "next"), ("button", "blank")):
+                             ("select", "set"), ("button", "next"), ("button", "blank")):
             try:
                 await self._client.publish(
                     f"{HA_PREFIX}/{kind}/flipperboards_{screen_id}/{entity}/config",
