@@ -2052,7 +2052,7 @@ async def update_settings(body: SettingsUpdate):
     for key, value in updates.items():
         if isinstance(value, bool):
             await database.update_setting(key, "true" if value else "false")
-        elif isinstance(value, (list, dict)):
+        elif isinstance(value, list | dict):
             await database.update_setting(key, json.dumps(value))
         else:
             await database.update_setting(key, str(value))

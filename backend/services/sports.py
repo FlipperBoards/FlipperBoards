@@ -229,7 +229,7 @@ def _parse_leagues(leagues, legacy_league: str) -> list[str]:
     raw = leagues if leagues else legacy_league
     if isinstance(raw, str):
         parts = [p.strip().lower() for p in raw.split(",")]
-    elif isinstance(raw, (list, tuple)):
+    elif isinstance(raw, list | tuple):
         parts = [str(p).strip().lower() for p in raw]
     else:
         parts = []
@@ -239,7 +239,7 @@ def _parse_leagues(leagues, legacy_league: str) -> list[str]:
 
 def _parse_teams(teams, legacy_team: str) -> list[str]:
     raw = teams if teams else legacy_team
-    if isinstance(raw, (list, tuple)):
+    if isinstance(raw, list | tuple):
         raw = ",".join(str(t) for t in raw)
     return [t.strip().upper() for t in str(raw or "").split(",") if t.strip()]
 

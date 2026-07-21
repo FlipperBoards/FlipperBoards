@@ -45,7 +45,7 @@ _cursor: dict[str, int] = {}
 
 
 def _domains(raw) -> list[str]:
-    if isinstance(raw, (list, tuple)):
+    if isinstance(raw, list | tuple):
         raw = ",".join(str(d) for d in raw)
     out = []
     for d in str(raw or "").split(","):
@@ -60,7 +60,7 @@ def _parse_topics(raw, legacy_topic="") -> list[str]:
     src = raw if raw else legacy_topic
     if isinstance(src, str):
         parts = [p.strip().upper() for p in src.split(",")]
-    elif isinstance(src, (list, tuple)):
+    elif isinstance(src, list | tuple):
         parts = [str(p).strip().upper() for p in src]
     else:
         parts = []
