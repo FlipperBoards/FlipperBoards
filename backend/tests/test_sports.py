@@ -190,6 +190,58 @@ async def test_score_change_flips_one_digit():
     NFL_FIXTURE["events"][0]["competitions"][0]["competitors"][0]["score"] = "21"
 
 
+# ── List layout: several games, one per row ───────────────────────────────────
+
+async def test_list_layout_stacks_games_one_per_row():
+    # Three NFL games, all shown at once — one team on each side of every row
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], status="all",
+                                       layout="list", screen_id="ls")
+    rows = _text(m)
+    assert any("CHIEFS" in r and "BILLS" in r for r in rows)     # live game row
+    assert any("COWBOYS" in r and "EAGLES" in r for r in rows)   # upcoming row
+    assert any("49ERS" in r and "SEA" in r for r in rows)        # final row
+
+
+async def test_list_layout_win_loss_tiles():
+    # Chiefs 21 - Bills 17: away Bills (17) trailing, home Chiefs (21) leading.
+    # The event puts KC as home, BUF as away → away tile red, home tile green.
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], teams="Chiefs",
+                                       layout="list", screen_id="lt")
+    row = next(r for r in m if r[0] != 0)  # first game row
+    assert row[0] == sports.LOSS_TILE   # away (Bills) trailing → red
+    assert row[21] == sports.WIN_TILE   # home (Chiefs) leading → green
+
+
+async def test_list_layout_pregame_even_tiles():
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], teams="Cowboys",
+                                       layout="list", screen_id="lp")
+    row = next(r for r in m if r[0] != 0)
+    assert row[0] == sports.EVEN_TILE and row[21] == sports.EVEN_TILE  # 0-0 pre
+
+
+async def test_list_layout_max_games_caps_and_pages():
+    # Cap to one game per screen; three games page through across renders
+    seen = set()
+    for _ in range(6):
+        m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], status="all",
+                                           layout="list", max_games=1,
+                                           screen_id="lpage")
+        filled = [r for r in m if any(c != 0 for c in r)]
+        assert len(filled) == 1  # only one game row rendered
+        seen.add(_text(m)[0].strip())
+    assert len(seen) == 3  # all three games appeared over the rotation
+
+
+async def test_list_score_next_to_name():
+    # "17 BILLS" hugs the right tile; "CHIEFS 21" hugs the left tile
+    m = await sports.get_sports_matrix(6, 22, leagues=["nfl"], teams="Chiefs",
+                                       layout="list", screen_id="lsn")
+    row_text = next(r for r in _text(m) if "CHIEFS" in r)
+    # away (Bills) is on the left with its score, home (Chiefs) on the right
+    assert row_text.index("BILLS") < row_text.index("CHIEFS")
+    assert "17" in row_text and "21" in row_text
+
+
 # ── Resilience ────────────────────────────────────────────────────────────────
 
 async def test_no_games(monkeypatch):
@@ -222,3 +274,5 @@ async def test_mode_registered(client):
     assert "leagues" in sports_mode["config_schema"]
     assert sports_mode["config_schema"]["leagues"]["type"] == "multiselect"
     assert "status" in sports_mode["config_schema"]
+    assert sports_mode["config_schema"]["layout"]["type"] == "select"
+    assert "max_games" in sports_mode["config_schema"]
