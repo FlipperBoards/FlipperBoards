@@ -11,8 +11,13 @@ import time
 
 import httpx
 
-from charmap import text_to_matrix, text_to_row
+from charmap import blank_matrix, char_to_code, text_to_matrix, text_to_row
 from services.scoreboard import get_scoreboard_matrix
+
+# Win/loss accent tiles for the list layout (charmap color codes)
+WIN_TILE = 74    # green
+LOSS_TILE = 71   # red
+EVEN_TILE = 77   # white — tie, or a game not yet started
 
 LEAGUES = {
     "nfl":   ("football/nfl",                       "NFL"),
@@ -151,6 +156,73 @@ def render_game(rows: int, cols: int, game: dict, tag: str = "") -> list[list[in
     return m
 
 
+def _game_tiles(away_score: int, home_score: int, state: str) -> tuple[int, int]:
+    """(away_tile, home_tile) accent codes. Leader green, trailing red; a tie or
+    a game that hasn't started gets white on both sides."""
+    if state == "pre" or away_score == home_score:
+        return EVEN_TILE, EVEN_TILE
+    if away_score > home_score:
+        return WIN_TILE, LOSS_TILE
+    return LOSS_TILE, WIN_TILE
+
+
+def _list_row(cols: int, game: dict) -> list[int]:
+    """One game on a single row: [tile] AWAY score … score HOME [tile].
+
+    Win/loss tiles sit on the far edges, each team's score hugs its name toward
+    the center, so a score change flips just its own digit tiles.
+    """
+    row = [0] * cols
+    away_score = str(game["away_score"])
+    home_score = str(game["home_score"])
+
+    if cols < 6:
+        text = f"{away_score}-{home_score}"[:cols]
+        for i, ch in enumerate(text):
+            row[i] = char_to_code(ch)
+        return row
+
+    away_tile, home_tile = _game_tiles(game["away_score"], game["home_score"], game["state"])
+    row[0] = away_tile
+    row[cols - 1] = home_tile
+
+    inner = cols - 2          # columns between the two accent tiles
+    half = inner // 2
+
+    # Left half: away name then its score, left-aligned from col 1
+    away_name = _fit_name(game["away_names"], half - len(away_score) - 1)
+    left = f"{away_name} {away_score}".strip().upper()[:half]
+    for i, ch in enumerate(left):
+        row[1 + i] = char_to_code(ch)
+
+    # Right half: home score then its name, right-aligned up to the home tile
+    home_name = _fit_name(game["home_names"], half - len(home_score) - 1)
+    right = f"{home_score} {home_name}".strip().upper()[:half]
+    start = (cols - 1) - len(right)
+    for i, ch in enumerate(right):
+        row[start + i] = char_to_code(ch)
+    return row
+
+
+def render_list(rows: int, cols: int, games: list[dict],
+                per_page: int, cursor_key: str) -> list[list[int]]:
+    """Several games at once, one per row. Shows up to `per_page` games (capped
+    by the row count); when more games exist than fit, pages through them."""
+    per_page = max(1, min(per_page, rows))
+    matrix = blank_matrix(rows, cols)
+    if len(games) <= per_page:
+        page_games = games
+    else:
+        pages = (len(games) + per_page - 1) // per_page
+        page = _cursor.get(cursor_key, 0) % pages
+        _cursor[cursor_key] = page + 1
+        start = page * per_page
+        page_games = games[start:start + per_page]
+    for i, game in enumerate(page_games):
+        matrix[i] = _list_row(cols, game)
+    return matrix
+
+
 def _parse_leagues(leagues, legacy_league: str) -> list[str]:
     """Config → ordered list of valid league keys. Accepts a list, a comma
     string, or the legacy single `league` field; defaults to NFL."""
@@ -184,7 +256,8 @@ def _game_matches_team(game: dict, tokens: list[str]) -> bool:
 async def get_sports_matrix(rows: int, cols: int, league: str = "nfl",
                             team: str = "", screen_id: str = "main",
                             leagues=None, status: str = "all",
-                            teams=None) -> list[list[int]]:
+                            teams=None, layout: str = "single",
+                            max_games: int = 5) -> list[list[int]]:
     league_keys = _parse_leagues(leagues, league)
     games = await get_all_games(league_keys)
 
@@ -201,6 +274,12 @@ async def get_sports_matrix(rows: int, cols: int, league: str = "nfl",
     if not games:
         return text_to_matrix(_empty_message(league_keys, status, tokens), rows, cols)
 
+    key = f"{screen_id}:{','.join(league_keys)}:{status}:{','.join(tokens)}"
+
+    if (layout or "single").lower() == "list":
+        # One game per row, several at once — no per-league tag (no room)
+        return render_list(rows, cols, games, max_games, key + ":list")
+
     # Tag rows with the league only when several leagues are in play
     tag_for = (lambda g: LEAGUE_TAGS.get(g["league"], "")) if len(league_keys) > 1 else (lambda g: "")
 
@@ -208,7 +287,6 @@ async def get_sports_matrix(rows: int, cols: int, league: str = "nfl",
         # Single game (or filtered to one): stay on it so score digits flip live
         return render_game(rows, cols, games[0], tag_for(games[0]))
 
-    key = f"{screen_id}:{','.join(league_keys)}:{status}:{','.join(tokens)}"
     idx = _cursor.get(key, 0) % len(games)
     _cursor[key] = idx + 1
     game = games[idx]

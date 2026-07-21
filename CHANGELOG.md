@@ -75,6 +75,12 @@ All notable changes to FlipperBoards are documented here.
   across leagues; it renders full team names
   where they fit (`KANSAS CITY CHIEFS` → `CHIEFS` → `KC`) instead of only
   abbreviations. Config uses a new multi-select chip widget
+- Sports **multi-game layout**: a *Multiple games (one per row)* option stacks
+  several games on the board at once — one team on the left, the other on the
+  right, each team's score next to its name, and win/loss color tiles on the
+  far edges (green leader / red trailing / white tie-or-upcoming). A **Max
+  games** setting caps the rows shown at once (default 5); extra games page
+  through. The default *One game (rotates)* layout is unchanged
 - Drive Times mode: live driving times with traffic to up to 6 destinations
   (Google Routes API, one Route Matrix call per refresh) — dot-leader rows
   with green/yellow/red traffic accent tiles; refreshes every 5 minutes only

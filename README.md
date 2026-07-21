@@ -220,7 +220,7 @@ Enable and order modes in the **Modes** tab. The rotation interval is set in **S
 | News | Google News — per-screen keyword search, source include/exclude, topic & locale; no API key |
 | Quotes | Rotating inspirational quotes (ZenQuotes API or built-in fallback) |
 | Calendar | Upcoming events from any iCal URL (Google Calendar, Outlook, etc.) — compact `M/D` date so titles get the room |
-| Sports | Live scores across one or many leagues (NFL, NBA, MLB, NHL, college, MLS, EPL) with status filtering and full team names — no API key |
+| Sports | Live scores across one or many leagues (NFL, NBA, MLB, NHL, college, MLS, EPL) with status filtering, full team names, and single- or multi-game layouts — no API key |
 | Countdown | Days / hours:minutes:seconds to any date (or count up since one) — seconds tick live |
 | Stocks | Stock & crypto prices with % change and green/red direction tiles — no API key needed |
 | Data Feed | Poll any JSON URL and render a template — follower counts, sensors, anything |
@@ -263,6 +263,13 @@ refresh with the rotation interval (60s API cache). Configure in the mode's ⚙:
 - **Team filter** — comma-separated names or abbreviations (`CHIEFS, LAKERS`),
   matched across every selected league. Filter to one game and it stays put so
   the score digits flip live.
+- **Layout** — *One game (rotates)*, the default, fills the board with a single
+  game and rotates through the slate; *Multiple games (one per row)* stacks
+  several games at once — one team on the left, the other on the right, each
+  team's score hugging its name toward the center, and win/loss color tiles on
+  the far edges (green for the leader, red for trailing, white for a tie or a
+  game that hasn't started). **Max games** caps how many rows fill at once
+  (default 5, capped by the board's row count); any extras page through.
 
 **Countdown mode** counts down to a target date (`2027-01-01 00:00`) with an
 optional label and a custom finish message — or counts up *since* a date.

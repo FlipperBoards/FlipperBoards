@@ -182,12 +182,18 @@ def _register_builtin_modes():
 
     async def render_sports(rows, cols, config, s):
         from services.sports import get_sports_matrix
+        try:
+            max_games = int(config.get("max_games") or 5)
+        except (TypeError, ValueError):
+            max_games = 5
         return await get_sports_matrix(rows, cols,
             leagues=config.get("leagues"),
             league=config.get("league", "nfl"),   # legacy single-league fallback
             status=config.get("status", "live_final"),
             teams=config.get("teams"),
             team=config.get("team", ""),           # legacy single-team fallback
+            layout=config.get("layout", "single"),
+            max_games=max_games,
             screen_id=config.get("_screen_id", "main"))
 
     async def render_countdown(rows, cols, config, s):
@@ -331,6 +337,22 @@ def _register_builtin_modes():
                 {"value": "all", "label": "All games"},
             ],
             "default": "live_final",
+        },
+        "layout": {
+            "type": "select",
+            "label": "Layout",
+            "options": [
+                {"value": "single", "label": "One game (rotates)"},
+                {"value": "list", "label": "Multiple games (one per row)"},
+            ],
+            "default": "single",
+            "help": "One game fills the board and rotates, or several stack one per row with win/loss color tiles on each edge.",
+        },
+        "max_games": {
+            "type": "number",
+            "label": "Max games (list layout)",
+            "placeholder": "5",
+            "help": "How many games to stack at once in the multiple-games layout (capped by the board's row count). Extra games page through.",
         },
         "teams": {
             "type": "text",
