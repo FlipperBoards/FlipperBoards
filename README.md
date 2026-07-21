@@ -599,6 +599,8 @@ discovery and appears in Home Assistant as a device — no YAML:
 
 - **Message** (text entity) — type a message, it appears on the board
 - **Mode** (select) — switch between clock/weather/news/…
+- **Playlist Set** (select) — pick which named set plays; the options track
+  your set names and the current value follows schedule/manual switches
 - **Next** (button) — advance the playlist
 - **Blank** (button) — clear the display
 

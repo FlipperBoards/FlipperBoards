@@ -102,12 +102,15 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
 
   const modeById = Object.fromEntries(availableModes.map(m => [m.id, m]))
 
-  const itemIcon  = (item) =>
-    item.type === 'text' ? '📝'
-    : item.type === 'photo' ? '🖼️'
-    : item.type === 'scoreboard' ? '🆚'
-    : item.type === 'menu' ? '🧾'
-    : modeById[item.content?.mode]?.icon ?? '⬡'
+  const typeIcon = (type, mode) =>
+    type === 'text' ? '📝'
+    : type === 'photo' ? '🖼️'
+    : type === 'scoreboard' ? '🆚'
+    : type === 'menu' ? '🧾'
+    : type === 'color' ? '🎨'
+    : type === 'matrix' ? '▦'
+    : modeById[mode]?.icon ?? '⬡'
+  const itemIcon = (item) => typeIcon(item.type, item.content?.mode)
   const itemLabel = (item) => {
     if (item.type === 'text') { const t = item.content?.text ?? ''; return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}"` }
     if (item.type === 'photo') return item.content?.url?.split('/').pop() ?? 'Photo'
@@ -423,6 +426,7 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
           <div className="flex flex-wrap gap-1.5 items-center">
             {sets.map(s => (
               <button key={s.id} onClick={() => { setViewedSet(s.id); setEditingSetSchedule(false) }}
+                title={`${s.item_count ?? 0} item${s.item_count === 1 ? '' : 's'}`}
                 className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-mono transition-all"
                 style={viewedSet === s.id
                   ? { background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', color: 'var(--text-1)' }
@@ -430,6 +434,15 @@ export default function UniversalPlaylist({ rows, cols, screenId = 'main' }) {
                 {s.active && <span title="Now playing" style={{ color: '#4ade80' }}>●</span>}
                 {s.name}
                 {s.schedule?.enabled && <span title="Scheduled" style={{ opacity: 0.7 }}>⏱</span>}
+                {/* Content preview — a glance at what's in the set */}
+                {(s.preview || []).length > 0 && (
+                  <span className="flex items-center gap-0.5 ml-0.5" style={{ opacity: 0.85 }}>
+                    {(s.preview || []).slice(0, 5).map((p, i) => (
+                      <span key={i} className="text-[10px] leading-none">{typeIcon(p.type, p.mode)}</span>
+                    ))}
+                    {(s.item_count ?? 0) > 5 && <span className="text-[9px]" style={{ opacity: 0.6 }}>+{s.item_count - 5}</span>}
+                  </span>
+                )}
               </button>
             ))}
             <button onClick={addSet}

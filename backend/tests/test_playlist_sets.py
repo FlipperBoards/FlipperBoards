@@ -40,6 +40,18 @@ async def test_default_set_created(screen):
     assert sets[0]["active"] is True
 
 
+async def test_sets_include_content_preview(screen):
+    client, sid = screen
+    set_a = (await _sets(client, sid))[0]["id"]
+    await client.post(f"/api/playlist?screen={sid}&set={set_a}",
+                      json={"type": "mode", "content": {"mode": "news"}, "duration": 30})
+    await _add(client, sid, "HI", set_id=set_a)
+    s = (await _sets(client, sid))[0]
+    assert s["item_count"] == 2
+    assert s["preview"][0] == {"type": "mode", "mode": "news"}
+    assert s["preview"][1]["type"] == "text"
+
+
 async def test_items_scoped_to_sets(screen):
     client, sid = screen
     set_a = (await _sets(client, sid))[0]["id"]

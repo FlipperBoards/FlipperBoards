@@ -58,8 +58,11 @@ All notable changes to FlipperBoards are documented here.
   rotate between them — activate one manually, or give a set a schedule
   (start/end time + weekdays) so it auto-activates (Morning / Lunch / Dinner).
   The scheduled set wins; a manual pick holds until the next boundary. Sets can
-  also be activated over MQTT (`<screen>/set/set` with a set name or id) for
-  Home Assistant automations
+  also be activated over MQTT (`<screen>/set/set` with a set name or id) and
+  appear in Home Assistant as a **Playlist Set** select entity (options track
+  your set names; the value follows schedule/manual switches). Set tabs in the
+  editor show a content preview (item count + type icons) so you can see what's
+  in each set without opening it
 - Sound scheduling: restrict flip sounds to set hours/days (Config → Sound),
   evaluated server-side in the configured timezone. Individual pushes can
   override it — `sound: true` (the Text tab's Chime box, or REST/MQTT) forces
